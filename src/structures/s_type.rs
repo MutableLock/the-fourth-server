@@ -6,7 +6,7 @@ use bincode::config::{Configuration, Fixint, LittleEndian};
 use num_enum::TryFromPrimitive;
 use crate::util::data_cipher::{DataCipher, EncryptionType};
 
-static BINCODE_CFG: Configuration<LittleEndian, Fixint> =
+pub static BINCODE_CFG: Configuration<LittleEndian, Fixint> =
     bincode::config::standard()
         .with_little_endian()
         .with_fixed_int_encoding()
