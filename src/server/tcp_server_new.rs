@@ -119,13 +119,16 @@ impl TcpServer {
     ) {
         while let Ok((stream, addr)) = listener.lock().unwrap().accept() {
             stream.set_nodelay(true).unwrap();
-            let stream = tungstenite::accept(stream).unwrap();
+            let stream = tungstenite::accept(stream);
+            if stream.is_ok() {
+                let stream = stream.unwrap();
+                let stream_data = StreamData {
+                    stream: Arc::new(Mutex::new(stream)),
+                    in_handle: Arc::new(Mutex::new(AtomicBool::new(false))),
+                };
+                connections.lock().unwrap().insert(addr, stream_data);
+            }
 
-            let stream_data = StreamData {
-                stream: Arc::new(Mutex::new(stream)),
-                in_handle: Arc::new(Mutex::new(AtomicBool::new(false))),
-            };
-            connections.lock().unwrap().insert(addr, stream_data);
         }
     }
 
