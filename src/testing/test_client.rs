@@ -21,9 +21,6 @@ impl Receiver for TestRecv {
         String::from("TestHandler")
     }
 
-    fn set_handler_id(&mut self, id: u64) {
-        self.id = id;
-    }
 
     fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)> {
         let res: (Vec<u8>, Box<dyn StructureType>) =

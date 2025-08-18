@@ -22,7 +22,6 @@ pub struct ClientConnection {
 
 pub trait Receiver: Send + Sync {
     fn get_handler_name(&self) -> String;
-    fn set_handler_id(&mut self, id: u64);
     fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)>;
     fn receive_response(&mut self, response: Vec<u8>);
 }
