@@ -192,7 +192,7 @@ impl TcpServer {
     }
 }
 
-fn bytes_into_vec(b: tungstenite::Bytes) -> Vec<u8> {
+pub fn bytes_into_vec(b: tungstenite::Bytes) -> Vec<u8> {
     match b.try_into() {
         Ok(vec) => vec, // zero-copy if unique
         _ => Vec::new(),
