@@ -225,10 +225,12 @@ pub fn validate_s_type(target: &dyn StrongType) -> bool {
 
 pub fn to_vec<T: Serialize + StrongType>(arg: &T) -> Option<Vec<u8>> {
     if !validate_s_type(arg) {
+        eprintln!("stype validation failed");
         return None;
     }
     let res = bincode::serde::encode_to_vec(arg, BINCODE_CFG.clone());
     if res.is_err() {
+        eprintln!("bincode serialization failed");
         return None;
     }
     Some(res.unwrap())

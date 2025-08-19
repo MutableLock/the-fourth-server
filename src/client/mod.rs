@@ -10,7 +10,7 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Relaxed, Release};
-use std::thread::spawn;
+use std::thread::{spawn, JoinHandle};
 use tungstenite::{Message, WebSocket};
 use tungstenite::stream::MaybeTlsStream;
 
@@ -18,6 +18,7 @@ pub struct ClientConnection {
     socket: Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
     receivers: Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
     running: Arc<Mutex<AtomicBool>>,
+    current_thread: Option<JoinHandle<()>>,
 }
 
 pub trait Receiver: Send + Sync {
@@ -39,6 +40,7 @@ impl ClientConnection {
             socket: Arc::new(Mutex::new(socket)),
             receivers: Arc::new(receivers),
             running: Arc::new(Mutex::new(AtomicBool::new(true))),
+            current_thread: None,
         }
     }
 
@@ -46,7 +48,7 @@ impl ClientConnection {
         let receivers = self.receivers.clone();
         let socket = self.socket.clone();
         let running = self.running.clone();
-        spawn(move || {
+        self.current_thread = Some(spawn(move || {
             let mut receivers_mapped: HashMap<u64, Arc<Mutex<dyn Receiver>>> = HashMap::new();
 
             loop {
@@ -59,11 +61,17 @@ impl ClientConnection {
 
                 Self::process_requests(&receivers_mapped, &socket);
             }
-        });
+        }));
     }
 
     pub fn stop(&mut self) {
         self.running.lock().unwrap().store(false, Release);
+    }
+
+    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>{
+        self.running.lock().unwrap().store(false, Release);
+        self.current_thread.take().unwrap().join().unwrap();
+        self.socket.clone()
     }
 
     fn register_receivers(
