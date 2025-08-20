@@ -70,7 +70,6 @@ impl ClientConnection {
 
     pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>{
         self.running.lock().unwrap().store(false, Release);
-        self.current_thread.take().unwrap().join().unwrap();
         self.socket.clone()
     }
 
