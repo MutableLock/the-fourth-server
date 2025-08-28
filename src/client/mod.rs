@@ -34,8 +34,23 @@ impl ClientConnection {
     the requested packets will be routed only at one receiver!!!
     */
     pub fn new(connection_dest: String, receivers: Vec<Arc<Mutex<dyn Receiver>>>) -> Self {
-        let socket = tungstenite::connect(&connection_dest).unwrap().0;
+        let mut socket = tungstenite::connect(&connection_dest).unwrap().0;
+        match socket.get_mut() {
+            MaybeTlsStream::Plain(tcp) => {
+                tcp.set_nonblocking(true).unwrap();
+            }
+            #[cfg(feature = "tls")]
+            MaybeTlsStream::NativeTls(tls) => {
+                // If using TLS, you may need to access the underlying TcpStream differently
+                tls.get_mut().set_nonblocking(true);
+            }
+            #[cfg(feature = "rustls-tls")]
+            MaybeTlsStream::Rustls(tls) => {
+                tls.get_mut().set_nonblocking(true)?;
+            }
 
+            _ => {}
+        }
         Self {
             socket: Arc::new(Mutex::new(socket)),
             receivers: Arc::new(receivers),

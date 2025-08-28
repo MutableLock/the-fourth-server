@@ -96,7 +96,10 @@ impl TcpServer {
                             req.iter().for_each(|x| {
                                 let found_route = sockets.lock().unwrap().remove(x);
                                 if found_route.is_some() {
-                                    res.push(found_route.unwrap().stream);
+                                    let found_route = found_route.unwrap();
+                                    found_route.stream.lock().unwrap().get_ref().set_nonblocking(true).unwrap();
+
+                                    res.push(found_route.stream);
                                 }
                             });
                             if !res.is_empty() {
@@ -122,6 +125,7 @@ impl TcpServer {
             let stream = tungstenite::accept(stream);
             if stream.is_ok() {
                 let stream = stream.unwrap();
+                stream.get_ref().set_nonblocking(true).unwrap();
                 let stream_data = StreamData {
                     stream: Arc::new(Mutex::new(stream)),
                     in_handle: Arc::new(Mutex::new(AtomicBool::new(false))),
