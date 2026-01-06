@@ -2,157 +2,207 @@ use crate::server::server_router::TcpServerRouter;
 use crate::structures::s_type;
 use crate::structures::s_type::ServerErrorEn::InternalError;
 use crate::structures::s_type::{PacketMeta, ServerErrorEn};
-use crate::util::rand_utils::generate_random_u8_vec;
-use crate::util::thread_pool::ThreadPool;
 use std::collections::HashMap;
 use std::fmt;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::ops::Deref;
+use std::pin::Pin;
 use std::sync::{
-    Arc, Mutex, MutexGuard,
+    Arc,
     atomic::{AtomicBool, Ordering::Relaxed},
 };
-use tungstenite::{Bytes, Error, Message, WebSocket};
+use std::task::{Context, Poll};
+use tokio::sync::Mutex;
+
+use futures_util::SinkExt;
+use tokio::io;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::yield_now;
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 /// TcpServer, responsible for listening and processing network traffic
 ///
-
+#[derive(Clone)]
 struct StreamData {
-    stream: Arc<Mutex<WebSocket<TcpStream>>>,
-    in_handle: Arc<Mutex<AtomicBool>>,
+    stream: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
+    in_handle: Arc<AtomicBool>,
 }
 
 pub struct TcpServer {
     router: Arc<TcpServerRouter>,
-    socket: Arc<Mutex<TcpListener>>,
+    socket: Arc<TcpListener>,
     socket_in_handle: Arc<Mutex<HashMap<SocketAddr, StreamData>>>,
-    work_group: Arc<Mutex<ThreadPool>>,
-    shutdown_sig: Arc<Mutex<AtomicBool>>,
+    shutdown_sig: Arc<AtomicBool>,
 }
 
 impl TcpServer {
-    pub fn new(
-        bind_address: String,
-        router: Arc<TcpServerRouter>,
-        work_group: ThreadPool,
-    ) -> Self {
+    pub async fn new(bind_address: String, router: Arc<TcpServerRouter>) -> Self {
         Self {
             router,
-            socket: Arc::new(Mutex::new(
-                TcpListener::bind(&bind_address).expect("Failed to bind to address"),
-            )),
+            socket: Arc::new(
+                TcpListener::bind(&bind_address)
+                    .await
+                    .expect("Failed to bind to address"),
+            ),
             socket_in_handle: Arc::new(Mutex::new(HashMap::new())),
-            work_group: Arc::new(Mutex::new(work_group)),
-            shutdown_sig: Arc::new(Mutex::new(AtomicBool::new(false))),
+            shutdown_sig: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub fn start(self_ref: Arc<Mutex<Self>>) {
-        let listener = self_ref.lock().unwrap().socket.clone();
-        listener.lock().unwrap().set_nonblocking(true).unwrap();
+    pub async fn start(self_ref: Arc<Mutex<Self>>) {
+        let (listener, handle_sockets, router, shutdown_sig) = {
+            let s = self_ref.lock().await;
+            (
+                s.socket.clone(),
+                s.socket_in_handle.clone(),
+                s.router.clone(),
+                s.shutdown_sig.clone(),
+            )
+        };
 
-        let handle_sockets = self_ref.lock().unwrap().socket_in_handle.clone();
-        let router = self_ref.lock().unwrap().router.clone();
-        let work_group = self_ref.lock().unwrap().work_group.clone();
-        let shutdown_sig = self_ref.lock().unwrap().shutdown_sig.clone();
-        let thread_pool = work_group.clone();
-
-        work_group.lock().unwrap().execute(move || {
+        tokio::spawn(async move {
             loop {
-                if shutdown_sig.lock().unwrap().load(Relaxed) {
+                if shutdown_sig.load(Relaxed) {
                     break;
                 }
 
-                Self::accept_new_connections(&listener, &handle_sockets);
-
+                let _ = Self::accept_one_connection(&listener, &handle_sockets).await;
                 let sockets = handle_sockets.clone();
                 let router = router.clone();
+                let to_spawn: Vec<_> = {
+                    let mut sockets = sockets.lock().await;
+                    sockets
+                        .iter_mut()
+                        .filter(|(_, data)| !data.in_handle.load(Relaxed))
+                        .map(|(addr, data)| {
+                            data.in_handle.store(true, Relaxed);
+                            (*addr, data.stream.clone(), data.in_handle.clone())
+                        })
+                        .collect()
+                };
 
-                sockets.lock().unwrap().retain(|addr, data| {
-                    if data.in_handle.lock().unwrap().load(Relaxed) {
-                        return true; // skip if already being handled
-                    }
 
-                    let socket = data.stream.clone();
-                    let flag = data.in_handle.clone();
-                    flag.lock().unwrap().store(true, Relaxed);
+                for (addr, socket, flag) in to_spawn {
+                    let router_handle = router.clone();
+                    let sockets_handle = sockets.clone();
+                    tokio::spawn(async move { Self::handle_connection(addr, socket, flag, router_handle.as_ref(), &sockets_handle).await });
+                }
 
-                    let thread_pool = thread_pool.clone();
-                    let router = router.clone();
-                    let sockets = sockets.clone();
-                    let addr = *addr;
-
-                    thread_pool.lock().unwrap().execute(move || {
-                        Self::handle_connection(addr, socket, flag, &router, &sockets);
-                    });
-                    true
-                });
-                router.get_routes().iter().for_each(|route| {
-                    let req = route.1.lock().unwrap().request_to_move_stream();
+                for route in router.get_routes().iter() {
+                    let req = route.1.lock().await.request_to_move_stream();
                     match req {
                         None => {}
                         Some(req) => {
                             let mut res = Vec::new();
-                            req.iter().for_each(|x| {
-                                let found_route = sockets.lock().unwrap().remove(x);
+                            for x in req.iter() {
+                                let found_route = sockets.lock().await.remove(x);
                                 if found_route.is_some() {
                                     let found_route = found_route.unwrap();
-                                    found_route.stream.lock().unwrap().get_ref().set_nonblocking(true).unwrap();
 
                                     res.push(found_route.stream);
                                 }
-                            });
+                            }
                             if !res.is_empty() {
-                                route.1.lock().unwrap().accept_stream(res);
+                                route.1.lock().await.accept_stream(res);
                             }
                         }
                     }
-                })
+                }
             }
         });
     }
 
     pub fn send_stop(&self) {
-        self.shutdown_sig.lock().unwrap().store(true, Relaxed);
+        self.shutdown_sig.store(true, Relaxed);
     }
 
-    fn accept_new_connections(
+    pub async fn accept_one_connection(
+        listener: &TcpListener,
+        connections: &Arc<Mutex<HashMap<SocketAddr, StreamData>>>,
+    ) -> io::Result<()> {
+        struct AcceptFuture<'a> {
+            listener: &'a TcpListener,
+        }
+        impl<'a> std::future::Future for AcceptFuture<'a> {
+            type Output = io::Result<Option<(tokio::net::TcpStream, SocketAddr)>>;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                match self.listener.poll_accept(cx) {
+                    Poll::Ready(Ok((stream, addr))) => Poll::Ready(Ok(Some((stream, addr)))),
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                    Poll::Pending => Poll::Ready(Ok(None)), // no connection ready
+                }
+            }
+        }
+
+        // Create the future
+        let fut = AcceptFuture { listener };
+
+        // Await it first
+        let result = fut.await?;
+
+        // Then match
+        match result {
+            Some((stream, addr)) => {
+                // New connection exists, register it
+                stream.set_nodelay(true)?;
+
+                let framed = Framed::new(stream, LengthDelimitedCodec::new());
+                let stream_data = StreamData {
+                    stream: Arc::new(Mutex::new(framed)),
+                    in_handle: Arc::new(AtomicBool::new(false)),
+                };
+
+                connections.lock().await.insert(addr, stream_data);
+            }
+            None => {
+                // No connection ready — just continue
+                tokio::task::yield_now().await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /*
+    async fn accept_new_connections(
         listener: &Arc<Mutex<TcpListener>>,
         connections: &Arc<Mutex<HashMap<SocketAddr, StreamData>>>,
     ) {
-        while let Ok((stream, addr)) = listener.lock().unwrap().accept() {
-            stream.set_nodelay(true).unwrap();
-            let stream = tungstenite::accept(stream);
-            if stream.is_ok() {
-                let stream = stream.unwrap();
-                stream.get_ref().set_nonblocking(true).unwrap();
-                let stream_data = StreamData {
-                    stream: Arc::new(Mutex::new(stream)),
-                    in_handle: Arc::new(Mutex::new(AtomicBool::new(false))),
-                };
-                connections.lock().unwrap().insert(addr, stream_data);
-            }
 
+        while let Ok((stream, addr)) = listener.lock().await.accept().await {
+            stream.set_nodelay(true).unwrap();
+            let framed = Framed::new(stream, LengthDelimitedCodec::new());
+            let stream_data = StreamData {
+                stream: Arc::new(Mutex::new(framed)),
+                in_handle: Arc::new(AtomicBool::new(false)),
+            };
+            connections.lock().await.insert(addr, stream_data);
         }
     }
 
-    fn handle_connection(
+     */
+
+    async fn handle_connection(
         addr: SocketAddr,
-        stream: Arc<Mutex<WebSocket<TcpStream>>>,
-        active_flag: Arc<Mutex<AtomicBool>>,
+        stream: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
+        active_flag: Arc<AtomicBool>,
         router: &TcpServerRouter,
         connections: &Arc<Mutex<HashMap<SocketAddr, StreamData>>>,
     ) {
-        let mut stream = stream.lock().unwrap();
+        use futures_util::SinkExt;
+        let mut stream = stream.lock().await;
         // Step 1: Receive meta
-        let meta_data: Result<Option<Vec<u8>>, ()> =
-            receive_message(addr.clone(), &mut stream, connections);
+        let meta_data: Result<Option<BytesMut>, ()> =
+            receive_message(addr.clone(), &mut stream, connections).await;
         if meta_data.is_err() {
             return;
         }
         let meta_data = meta_data.unwrap();
         if meta_data.is_none() {
-            active_flag.lock().unwrap().store(false, Relaxed);
+            active_flag.store(false, Relaxed);
             return;
         }
 
@@ -162,162 +212,81 @@ impl TcpServer {
             Err(_) => false,
         };
 
-        let mut payload: Vec<u8> = Vec::new();
+        let mut payload: BytesMut= BytesMut::new();
         if has_payload {
-            let payload_res = receive_message(addr.clone(), &mut stream, connections);
+            let payload_res = receive_message(addr.clone(), &mut stream, connections).await;
             if payload_res.is_err() {
-                active_flag.lock().unwrap().store(false, Relaxed);
+                active_flag.store(false, Relaxed);
                 return;
             }
             let payload_opt = payload_res.unwrap();
             if payload_opt.is_none() {
-                let _ = stream.close(None);
-                connections.lock().unwrap().remove(&addr);
+                let _ = stream.close().await;
+                connections.lock().await.remove(&addr);
                 return;
             }
             payload = payload_opt.unwrap();
         }
-        let res = router.serve_packet(meta_data, payload, addr);
-
-        let message = match res {
-            Ok(data) => Message::Binary(Bytes::from(data)),
-            Err(err) => Message::Binary(Bytes::from(s_type::to_vec(&err).unwrap())),
-        };
-        let res = stream.send(message);
+        let res = router.serve_packet(meta_data, payload, addr).await;
+        let message = res.unwrap_or_else(|err|Bytes::from(s_type::to_vec(&err).unwrap()));
+        let res = stream.send(message).await;
         match res {
             Err(_) => {
-                let _ = stream.close(None);
-                connections.lock().unwrap().remove(&addr);
+                let _ = stream.close();
+                connections.lock().await.remove(&addr);
                 return;
             }
             _ => {}
         }
-        active_flag.lock().unwrap().store(false, Relaxed);
+        active_flag.store(false, Relaxed);
     }
 }
 
-pub fn bytes_into_vec(b: tungstenite::Bytes) -> Vec<u8> {
-    match b.try_into() {
-        Ok(vec) => vec, // zero-copy if unique
-        _ => Vec::new(),
-    }
-}
 
-fn receive_message(
+async fn receive_message(
     addr: SocketAddr,
-    stream: &mut MutexGuard<WebSocket<TcpStream>>,
+    stream: &mut Framed<TcpStream, LengthDelimitedCodec>,
     connections: &Arc<Mutex<HashMap<SocketAddr, StreamData>>>,
-) -> Result<Option<Vec<u8>>, ()> {
-    match stream.read() {
-        Ok(data) => match data {
-            Message::Text(_) => {
-                let _ = stream.close(None);
-                connections.lock().unwrap().remove(&addr);
-                return Err(());
+) -> Result<Option<BytesMut>, ()> {
+    use futures_util::{StreamExt};
+    match stream.next().await {
+        Some(data) => match data {
+            Ok(data) => {
+                return Ok(Some(data));
             }
-            Message::Binary(data) => {
-                return Ok(Some(bytes_into_vec(data)));
-            }
-            Message::Ping(_) => {
-                let len = rand::random_range(1..124);
-                let res = stream.send(Message::Pong(Bytes::from(generate_random_u8_vec(len))));
-                return match res {
-                    Ok(_) => {
-                        Ok(None)
+            Err(e) => {
+                // This is where codec-level decoding errors happen
+                match e.kind() {
+                    // IO errors usually mean the connection is broken
+                    std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof => {
+                       let conn = connections.lock().await.remove(&addr);
+                        let _ = conn.unwrap().stream.lock().await.close().await;
+                        println!("Client disconnected");
+                        return Err(());
                     }
-                    Err(_) => {
-                        let _ = stream.close(None);
-                        connections.lock().unwrap().remove(&addr);
-                        Err(())
+
+                    // Frame too large (if you set max_frame_length)
+                    std::io::ErrorKind::InvalidData => {
+                        eprintln!("Frame exceeded maximum size: {e}");
+                        return Err(());
                     }
-                };
-            }
-            Message::Pong(_) => {
-                let len = rand::random_range(1..124);
-                let res = stream.send(Message::Ping(Bytes::from(generate_random_u8_vec(len))));
-                return match res {
-                    Ok(_) => {
-                        Ok(None)
+
+                    // Other IO errors
+                    _ => {
+                        eprintln!("IO error while reading frame: {e}");
+                        return Err(());
+
                     }
-                    Err(_) => {
-                        let _ = stream.close(None);
-                        connections.lock().unwrap().remove(&addr);
-                        Err(())
-                    }
-                };
-            }
-            Message::Close(_) => {
-                let _ = stream.close(None);
-                connections.lock().unwrap().remove(&addr);
-                return Err(());
-            }
-            Message::Frame(_) => {
-                let _ = stream.close(None);
-                connections.lock().unwrap().remove(&addr);
-                return Err(());
+                }
             }
         },
-        Err(e) => {
-            return match e {
-                Error::ConnectionClosed => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::AlreadyClosed => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::Io(_) => Ok(None),
-                Error::Tls(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::Capacity(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::Protocol(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::WriteBufferFull(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::Utf8(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::AttackAttempt => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::Url(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::Http(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-                Error::HttpFormat(_) => {
-                    let _ = stream.close(None);
-                    connections.lock().unwrap().remove(&addr);
-                    Err(())
-                }
-            };
+        None => {
+            return Ok(None);
         }
-    };
+    }
 }
 
 // Custom Error Display

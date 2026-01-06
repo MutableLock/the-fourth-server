@@ -1,5 +1,5 @@
 //Pretty shitty implementations of client at this time, if u have ideas feel free to contact me
-
+/*
 use crate::structures::s_type;
 use crate::structures::s_type::{
     HandlerMetaAns, HandlerMetaReq, PacketMeta, StructureType, SystemSType,
@@ -150,3 +150,5 @@ impl ClientConnection {
         res.unwrap().into_data().to_vec()
     }
 }
+
+ */

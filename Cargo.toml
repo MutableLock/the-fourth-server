@@ -15,4 +15,6 @@ sha2 = "0.11.0-rc.0"
 num_enum = "0.7"
 rand = "0.9.2"
 bincode = { version = "2", features = ["serde"] }
-tungstenite = "0.27"
+tokio = { version = "1", features = ["full"] }
+tokio-util = {version = "0.7", features = ["codec"]}
+futures-util = { version = "0.3", features = ["sink"] }

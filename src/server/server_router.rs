@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use tokio::sync::Mutex;
+use tokio_util::bytes::{Bytes, BytesMut};
 use crate::server::handler::Handler;
 use crate::structures::s_type;
 use crate::structures::s_type::{HandlerMetaAns, HandlerMetaReq, PacketMeta, ServerError, ServerErrorEn, StructureType, SystemSType, TypeContainer, TypeTupple};
@@ -73,12 +75,12 @@ impl TcpServerRouter {
         self.routes.clone()
     }
 
-    pub fn serve_packet(
+    pub async fn serve_packet(
         &self,
-        meta: Vec<u8>,
-        payload: Vec<u8>,
+        meta: BytesMut,
+        payload: BytesMut,
         client_meta: SocketAddr,
-    ) -> Result<Vec<u8>, ServerError> {
+    ) -> Result<Bytes, ServerError> {
         // Try to deserialize normal PacketMeta
         if let Ok(meta_pack) = s_type::from_slice::<PacketMeta>(&meta) {
             let s_type = self.user_s_type.get_deserialize_function().deref()(meta_pack.s_type_req);
@@ -88,7 +90,7 @@ impl TcpServerRouter {
             };
 
             let handler = self.routes.get(&key).ok_or(ServerError::new(ServerErrorEn::NoSuchHandler(None)))?;
-            let mut handler_lock = handler.lock().unwrap();
+            let mut handler_lock = handler.lock().await;
             let res = catch_unwind(AssertUnwindSafe(|| {
                 handler_lock.serve_route(client_meta, s_type, payload)
             }));
@@ -96,7 +98,7 @@ impl TcpServerRouter {
             return match res {
                 Ok(data) => match data{
                     Ok(data) => Ok(data),
-                    Err(err) => {Err(ServerError::new(ServerErrorEn::InternalError(Some(err))))}
+                    Err(err) => {Err(ServerError::new(ServerErrorEn::InternalError(Some(err.to_vec()))))}
                 },
                 Err(_) => Err(ServerError::new(InternalError(Some("handler died :(".as_bytes().to_vec())))),
             };
@@ -109,7 +111,7 @@ impl TcpServerRouter {
                     s_type: SystemSType::HandlerMetaAns,
                     id: *route_id,
                 };
-                return Ok(s_type::to_vec(&meta_ans).unwrap());
+                return Ok(Bytes::from(s_type::to_vec(&meta_ans).unwrap()));
             } else {
                 return Err(ServerError::new(ServerErrorEn::NoSuchHandler(None)));
             }

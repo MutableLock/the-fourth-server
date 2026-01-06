@@ -4,7 +4,6 @@ pub mod server;
 pub mod client;
 
 pub use openssl;
-pub use tungstenite;
 pub use bincode;
 pub use sha2;
 

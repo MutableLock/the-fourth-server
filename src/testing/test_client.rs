@@ -1,3 +1,4 @@
+/*
 use crate::client::{ClientConnection, Receiver};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
@@ -98,3 +99,6 @@ pub fn init_client() -> ClientConnection {
     );
     return connection;
 }
+
+
+ */
