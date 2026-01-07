@@ -1,23 +1,25 @@
 //Pretty shitty implementations of client at this time, if u have ideas feel free to contact me
-/*
+use tokio::time::sleep;
 use crate::structures::s_type;
 use crate::structures::s_type::{
     HandlerMetaAns, HandlerMetaReq, PacketMeta, StructureType, SystemSType,
 };
 use std::collections::HashMap;
-use tungstenite::Bytes;
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use tokio::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Relaxed, Release};
-use std::thread::{spawn, JoinHandle};
-use tungstenite::{Message, WebSocket};
-use tungstenite::stream::MaybeTlsStream;
+use std::time::Duration;
+use futures_util::StreamExt;
+use tokio::net::TcpStream;
+use tokio::task::JoinHandle;
+use tokio_util::bytes::Bytes;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub struct ClientConnection {
-    socket: Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
+    socket: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
     receivers: Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
-    running: Arc<Mutex<AtomicBool>>,
+    running: Arc<AtomicBool>,
     current_thread: Option<JoinHandle<()>>,
 }
 
@@ -33,88 +35,78 @@ impl ClientConnection {
     if there is two or more receivers with the same handler name,
     the requested packets will be routed only at one receiver!!!
     */
-    pub fn new(connection_dest: String, receivers: Vec<Arc<Mutex<dyn Receiver>>>) -> Self {
-        let mut socket = tungstenite::connect(&connection_dest).unwrap().0;
-        match socket.get_mut() {
-            MaybeTlsStream::Plain(tcp) => {
-                tcp.set_nonblocking(true).unwrap();
-            }
-            #[cfg(feature = "tls")]
-            MaybeTlsStream::NativeTls(tls) => {
-                // If using TLS, you may need to access the underlying TcpStream differently
-                tls.get_mut().set_nonblocking(true);
-            }
-            #[cfg(feature = "rustls-tls")]
-            MaybeTlsStream::Rustls(tls) => {
-                tls.get_mut().set_nonblocking(true)?;
-            }
-
-            _ => {}
-        }
+    pub async fn new(connection_dest: String, receivers: Vec<Arc<Mutex<dyn Receiver>>>) -> Self {
+        let socket = Framed::new(TcpStream::connect(connection_dest).await.unwrap(), LengthDelimitedCodec::new());
         Self {
             socket: Arc::new(Mutex::new(socket)),
             receivers: Arc::new(receivers),
-            running: Arc::new(Mutex::new(AtomicBool::new(true))),
+            running: Arc::new(AtomicBool::new(true)),
             current_thread: None,
         }
     }
 
-    pub fn start(&mut self) {
+    pub async fn start(&mut self) {
         let receivers = self.receivers.clone();
         let socket = self.socket.clone();
         let running = self.running.clone();
-        self.current_thread = Some(spawn(move || {
+        self.current_thread = Some(tokio::spawn(async move {
             let mut receivers_mapped: HashMap<u64, Arc<Mutex<dyn Receiver>>> = HashMap::new();
 
             loop {
-                if !running.lock().unwrap().load(Relaxed){
+                if !running.load(Relaxed){
                     break;
                 }
                 if receivers_mapped.is_empty() {
-                    Self::register_receivers(&receivers, &socket, &mut receivers_mapped);
+                    Self::register_receivers(&receivers, &socket, &mut receivers_mapped).await;
+                } else {
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
                 }
 
-                Self::process_requests(&receivers_mapped, &socket);
+                Self::process_requests(&receivers_mapped, &socket).await;
             }
         }));
     }
 
     pub fn stop(&mut self) {
-        self.running.lock().unwrap().store(false, Release);
+        self.running.store(false, Release);
     }
 
-    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>{
-        self.running.lock().unwrap().store(false, Release);
+    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>{
+        self.running.store(false, Release);
         self.socket.clone()
     }
 
-    fn register_receivers(
+    async fn register_receivers(
         receivers: &Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
-        socket: &Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
+        socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
         receivers_mapped: &mut HashMap<u64, Arc<Mutex<dyn Receiver>>>,
     ) {
+        use futures_util::SinkExt;
+
         for receiver in receivers.iter() {
             let meta_req = HandlerMetaReq {
                 s_type: SystemSType::HandlerMetaReq,
-                handler_name: receiver.lock().unwrap().get_handler_name(),
+                handler_name: receiver.lock().await.get_handler_name(),
             };
 
             let data = s_type::to_vec(&meta_req).unwrap();
-            socket.lock().unwrap().send(Message::Binary(Bytes::from(data))).unwrap();
+            socket.lock().await.send(Bytes::from(data)).await.expect("Failed to send");
 
-            let data = Self::wait_for_data(socket);
-            let meta_ans = s_type::from_slice::<HandlerMetaAns>(&data).unwrap();
+            let data = Self::wait_for_data(socket).await;
+            let meta_ans = s_type::from_slice::<HandlerMetaAns>(data.as_slice()).unwrap();
 
             receivers_mapped.insert(meta_ans.id, receiver.clone());
         }
     }
 
-    fn process_requests(
+    async fn process_requests(
         receivers_mapped: &HashMap<u64, Arc<Mutex<dyn Receiver>>>,
-        socket: &Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
+        socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
     ) {
+        use futures_util::SinkExt;
+
         for (handler_id, receiver) in receivers_mapped.iter() {
-            let mut receiver_lock = receiver.lock().unwrap();
+            let mut receiver_lock = receiver.lock().await;
             if let Some((payload, structure)) = receiver_lock.get_request() {
                 let meta = PacketMeta {
                     s_type: SystemSType::PacketMeta,
@@ -124,31 +116,24 @@ impl ClientConnection {
                 };
 
                 let meta_bytes = s_type::to_vec(&meta).unwrap();
-                socket.lock().unwrap().send(Message::Binary(Bytes::from(meta_bytes))).unwrap();
+                socket.lock().await.send(Bytes::from(meta_bytes)).await.unwrap();
                 println!("{}", payload.len());
-                socket.lock().unwrap().send(Message::Binary(Bytes::from(payload))).unwrap();
-                let response = Self::wait_for_data(socket);
+                socket.lock().await.send(Bytes::from(payload)).await.unwrap();
+                let response = Self::wait_for_data(socket).await;
                 receiver_lock.receive_response(response);
             }
         }
     }
 
-    fn wait_for_data(
-        socket: &Arc<Mutex<WebSocket<MaybeTlsStream<TcpStream>>>>,
+    async fn wait_for_data(
+        socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
     ) -> Vec<u8> {
-        let mut res = socket.lock().unwrap().read();
-        while res.is_err() {
-            let err = res.unwrap_err();
-            match err {
-                tungstenite::Error::Io(_) => {}
-                _ => {
-                    panic!("Unexpected error reading from socket");
-                }
-            }
-            res = socket.lock().unwrap().read();
+        use futures_util::{StreamExt};
+
+        let mut res = socket.lock().await.next().await;
+        while res.is_some() {
+            res = socket.lock().await.next().await;
         }
-        res.unwrap().into_data().to_vec()
+        res.unwrap().unwrap().to_vec()
     }
 }
-
- */

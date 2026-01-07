@@ -1,4 +1,4 @@
-/*
+
 use crate::client::{ClientConnection, Receiver};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
@@ -88,17 +88,14 @@ impl Receiver for TestRecv {
     }
 }
 
-pub fn init_client() -> ClientConnection {
+pub async fn init_client() -> ClientConnection {
     let connection = ClientConnection::new(
-        "ws://127.0.0.1:3333".to_string(),
-        vec![Arc::new(Mutex::new(TestRecv {
+        "127.0.0.1:3333".to_string(),
+        vec![Arc::new(tokio::sync::Mutex::new(TestRecv {
             counter: Arc::new(Mutex::new(AtomicU64::new(0))),
             response_send: Arc::new(Mutex::new(AtomicU64::new(0))),
             id: 0,
         }))],
-    );
+    ).await;
     return connection;
 }
-
-
- */

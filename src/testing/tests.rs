@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use crate::testing::test_client::init_client;
 use crate::testing::test_s_type::*;
 
 struct TestHandler{
@@ -114,9 +115,9 @@ async fn server_start() {
     println!("now the process will need to shutdown, if not this is trouble");
 }
 
-/*
-#[test]
-pub fn server_start_and_client_request() {
+
+#[tokio::test]
+pub async fn server_start_and_client_request() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
     router.add_route(
         Arc::new(Mutex::new(TestHandler {moved_streams: Vec::new()})),
@@ -134,19 +135,16 @@ pub fn server_start_and_client_request() {
     let server = Arc::new(Mutex::new(TcpServer::new(
         "127.0.0.1:3333".to_string(),
         router,
-    )));
+    ).await));
 
-    TcpServer::start(server.clone());
-    let mut client = init_client();
-    client.start();
+    TcpServer::start(server.clone()).await;
+    let mut client = init_client().await;
+    client.start().await;
 
-    sleep(Duration::from_millis(5000));
-    server.lock().unwrap().send_stop();
+    sleep(Duration::from_millis(2555000)).await;
+    server.lock().await.send_stop();
     client.stop();
     println!("sended stop waiting before exit");
-    sleep(Duration::from_millis(1500));
+    sleep(Duration::from_millis(1500)).await;
     println!("now the process will need to shutdown, if not this is trouble");
 }
-
-
- */
