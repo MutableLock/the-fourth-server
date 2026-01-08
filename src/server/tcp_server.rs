@@ -17,12 +17,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 
+use crate::server::handler::Handler;
 use futures_util::{SinkExt, StreamExt};
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
+/*
 #[derive(Clone)]
 struct StreamData {
     stream: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
@@ -44,6 +47,7 @@ impl StreamData {
         Some(Ok(self.processors.pre_process_traffic(msg).await))
     }
 }
+
 
 pub trait TrafficProcess {
     fn initial_connect(&mut self, source: Arc<Mutex<TcpStream>>);
@@ -75,11 +79,16 @@ impl TrafficProcessorHolder {
         data
     }
 }
+*/
+
+pub type RequestChannel = (
+    Sender<Arc<Mutex<dyn Handler>>>,
+    Receiver<Arc<Mutex<dyn Handler>>>,
+);
 
 pub struct TcpServer {
     router: Arc<TcpServerRouter>,
     socket: Arc<TcpListener>,
-    socket_in_handle: Arc<Mutex<HashMap<SocketAddr, StreamData>>>,
     shutdown_sig: Arc<Notify>,
 }
 
@@ -92,17 +101,15 @@ impl TcpServer {
                     .await
                     .expect("Failed to bind to address"),
             ),
-            socket_in_handle: Arc::new(Mutex::new(HashMap::new())),
             shutdown_sig: Arc::new(Notify::new()),
         }
     }
 
-    pub async fn start(self_ref: Arc<Mutex<Self>>) {
-        let (listener, handle_sockets, router, shutdown_sig) = {
-            let s = self_ref.lock().await;
+    pub async fn start(self_ref: Arc<Self>) {
+        let (listener, router, shutdown_sig) = {
+            let s = self_ref;
             (
                 s.socket.clone(),
-                s.socket_in_handle.clone(),
                 s.router.clone(),
                 s.shutdown_sig.clone(),
             )
@@ -135,17 +142,9 @@ impl TcpServer {
         router: &TcpServerRouter,
     ) {
         use futures_util::SinkExt;
+        let mut move_sig = tokio::sync::oneshot::channel::<Arc<Mutex<dyn Handler>>>();
+        let mut move_sig = (Some(move_sig.0), move_sig.1);
         loop {
-            let reqs = router.get_move_requests().await;
-            if !reqs.is_empty() {
-                for req in reqs.iter() {
-                    if req.1.contains(&addr) {
-                        req.0.lock().await.accept_stream(addr, stream);
-                        return;
-                    }
-                }
-            }
-
             let meta_data: Result<Option<BytesMut>, bool> =
                 receive_message(addr.clone(), &mut stream).await;
             if meta_data.is_err() {
@@ -183,9 +182,18 @@ impl TcpServer {
                 }
                 payload = payload_opt.unwrap();
             }
-            let res = router.serve_packet(meta_data, payload, addr).await;
+            let res = router
+                .serve_packet(meta_data, payload, (addr, &mut move_sig.0))
+                .await;
+
             let message = res.unwrap_or_else(|err| Bytes::from(s_type::to_vec(&err).unwrap()));
             let res = stream.send(message).await;
+
+            if let Ok(requester) = move_sig.1.try_recv() {
+                requester.lock().await.accept_stream(addr, stream);
+                return;
+            }
+
             match res {
                 Err(_) => {
                     let _ = stream.close();

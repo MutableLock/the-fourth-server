@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpStream};
 use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
+use tokio::sync::oneshot::Sender;
 use tokio_util::bytes::{Bytes, BytesMut};
 use crate::server::handler::Handler;
 use crate::structures::s_type;
@@ -71,16 +72,6 @@ impl TcpServerRouter {
         self.routes_commited = true;
     }
 
-    pub async fn get_move_requests(&self) -> Vec<(Arc<Mutex<dyn Handler>>, Vec<SocketAddr>)> {
-        let mut requests = Vec::new();
-
-        for (type_t, handler) in self.routes.iter() {
-            if let Some(mut res) =  handler.lock().await.request_to_move_stream(){
-                requests.push((handler.clone(), res));
-            }
-        }
-        requests
-    }
 
     pub fn get_routes(&self) -> Arc<HashMap<TypeTupple, Arc<Mutex<dyn Handler>>>> {
         self.routes.clone()
@@ -90,7 +81,7 @@ impl TcpServerRouter {
         &self,
         meta: BytesMut,
         payload: BytesMut,
-        client_meta: SocketAddr,
+        client_meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
     ) -> Result<Bytes, ServerError> {
         // Try to deserialize normal PacketMeta
         if let Ok(meta_pack) = s_type::from_slice::<PacketMeta>(&meta) {

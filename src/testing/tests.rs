@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -22,7 +23,7 @@ struct TestHandler {
 impl Handler for TestHandler {
     fn serve_route(
         &mut self,
-        _: SocketAddr,
+        cli_meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
         mut data: BytesMut,
     ) -> Result<Bytes, Bytes> {
@@ -78,10 +79,6 @@ impl Handler for TestHandler {
         }
     }
 
-    fn request_to_move_stream(&self) -> Option<Vec<SocketAddr>> {
-        None
-    }
-
     fn accept_stream(&mut self, add: SocketAddr, stream: Framed<TcpStream, LengthDelimitedCodec>) {
         self.moved_streams.push(stream);
     }
@@ -104,14 +101,14 @@ async fn server_start() {
     router.commit_routes();
     let router = Arc::new(router);
 
-    let server = Arc::new(Mutex::new(
+    let server = Arc::new(
         TcpServer::new("127.0.0.1:3333".to_string(), router).await,
-    ));
+    );
 
     TcpServer::start(server.clone()).await;
 
     sleep(Duration::from_millis(50000)).await;
-    server.lock().await.send_stop();
+    server.send_stop();
     println!("sended stop waiting before exit");
     sleep(Duration::from_millis(50000)).await;
     println!("now the process will need to shutdown, if not this is trouble");
@@ -134,16 +131,16 @@ pub async fn server_start_and_client_request() {
     router.commit_routes();
     let router = Arc::new(router);
 
-    let server = Arc::new(Mutex::new(
+    let server = Arc::new(
         TcpServer::new("127.0.0.1:3333".to_string(), router).await,
-    ));
+    );
 
     TcpServer::start(server.clone()).await;
     let mut client = init_client().await;
     client.start().await;
 
     sleep(Duration::from_millis(15000)).await;
-    server.lock().await.send_stop();
+    server.send_stop();
     client.stop();
     println!("sended stop waiting before exit");
     sleep(Duration::from_millis(1500)).await;
