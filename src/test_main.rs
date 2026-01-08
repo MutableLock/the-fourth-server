@@ -33,11 +33,14 @@ struct TestHandler{
 impl Handler for TestHandler {
     fn serve_route(
         &mut self,
-        _: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
+        meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
         mut data: BytesMut
     ) -> Result<Bytes, Bytes> {
         let base_s_type = s_type.as_any().downcast_ref::<TestStructureType>().unwrap();
+
+
+
         if data.is_empty() {
             let test_error = TestError {
                 s_type: TestStructureType::TestError,

@@ -10,6 +10,11 @@ use crate::structures::s_type::StructureType;
 pub trait Handler: Send + Sync {
     fn serve_route(
         &mut self,
+        /*If request needed, call take() on this option
+        *if let Some(tx) = meta.1.take(){
+        *            tx.send(...).unwrap();
+        *        }
+        */
         client_meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
         data: BytesMut,
