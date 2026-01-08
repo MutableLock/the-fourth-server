@@ -5,8 +5,8 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot::Sender;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use crate::server::tcp_server::TrafficProcessorHolder;
 use crate::structures::s_type::StructureType;
+use crate::structures::traffic_proc::TrafficProcessorHolder;
 
 pub trait Handler: Send + Sync {
     fn serve_route(

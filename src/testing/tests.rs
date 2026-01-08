@@ -1,6 +1,6 @@
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
-use crate::server::tcp_server::{TcpServer, TrafficProcessorHolder};
+use crate::server::tcp_server::{TcpServer};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 
@@ -15,6 +15,8 @@ use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use crate::structures::traffic_proc::TrafficProcessorHolder;
+use crate::testing::test_proc::TestProcessor;
 
 struct TestHandler {
     moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
@@ -128,8 +130,9 @@ pub async fn server_start_and_client_request() {
     );
     router.commit_routes();
     let router = Arc::new(router);
-
-    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, None).await;
+    let mut proc_holder = TrafficProcessorHolder::new();
+    proc_holder.register_processor(Box::new(TestProcessor::new()));
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder)).await;
 
     server.start().await;
     let mut client = init_client().await;

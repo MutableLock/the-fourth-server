@@ -13,20 +13,22 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
-use tokio_util::bytes::Bytes;
+use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use crate::structures::traffic_proc::TrafficProcessorHolder;
 
 pub struct ClientConnection {
     socket: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
     receivers: Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
     running: Arc<AtomicBool>,
     current_thread: Option<JoinHandle<()>>,
+    processor: Option<TrafficProcessorHolder>,
 }
 
 pub trait Receiver: Send + Sync {
     fn get_handler_name(&self) -> String;
     fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)>;
-    fn receive_response(&mut self, response: Vec<u8>);
+    fn receive_response(&mut self, response: BytesMut);
 }
 
 impl ClientConnection {
@@ -35,13 +37,19 @@ impl ClientConnection {
     if there is two or more receivers with the same handler name,
     the requested packets will be routed only at one receiver!!!
     */
-    pub async fn new(connection_dest: String, receivers: Vec<Arc<Mutex<dyn Receiver>>>) -> Self {
-        let socket = Framed::new(TcpStream::connect(connection_dest).await.unwrap(), LengthDelimitedCodec::new());
+    pub async fn new(connection_dest: String, receivers: Vec<Arc<Mutex<dyn Receiver>>>, mut processor: Option<TrafficProcessorHolder>) -> Self {
+        let mut socket = TcpStream::connect(connection_dest).await.unwrap();
+        if processor.is_some() {
+            processor.as_mut().unwrap().initial_connect(&mut socket).await;
+        }
+        let socket = Framed::new(socket, LengthDelimitedCodec::new());
+
         Self {
             socket: Arc::new(Mutex::new(socket)),
             receivers: Arc::new(receivers),
             running: Arc::new(AtomicBool::new(true)),
             current_thread: None,
+            processor,
         }
     }
 
@@ -49,6 +57,7 @@ impl ClientConnection {
         let receivers = self.receivers.clone();
         let socket = self.socket.clone();
         let running = self.running.clone();
+        let mut processor = if let Some(processor) = self.processor.take() {processor} else {TrafficProcessorHolder::new()};
         self.current_thread = Some(tokio::spawn(async move {
             let mut receivers_mapped: HashMap<u64, Arc<Mutex<dyn Receiver>>> = HashMap::new();
 
@@ -57,12 +66,12 @@ impl ClientConnection {
                     break;
                 }
                 if receivers_mapped.is_empty() {
-                    Self::register_receivers(&receivers, &socket, &mut receivers_mapped).await;
+                    Self::register_receivers(&receivers, &socket, &mut receivers_mapped, &mut processor).await;
                 } else {
                     tokio::time::sleep(Duration::from_millis(1500)).await;
                 }
 
-                Self::process_requests(&receivers_mapped, &socket).await;
+                Self::process_requests(&receivers_mapped, &socket, &mut processor).await;
             }
         }));
     }
@@ -80,6 +89,7 @@ impl ClientConnection {
         receivers: &Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
         socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
         receivers_mapped: &mut HashMap<u64, Arc<Mutex<dyn Receiver>>>,
+        processor: &mut TrafficProcessorHolder,
     ) {
         use futures_util::SinkExt;
 
@@ -90,10 +100,13 @@ impl ClientConnection {
             };
 
             let data = s_type::to_vec(&meta_req).unwrap();
+            let data = processor.post_process_traffic(data).await;
+
             socket.lock().await.send(Bytes::from(data)).await.expect("Failed to send");
 
-            let data = Self::wait_for_data(socket).await;
-            let meta_ans = s_type::from_slice::<HandlerMetaAns>(data.as_slice()).unwrap();
+            let mut data =  processor.pre_process_traffic(Self::wait_for_data(socket).await).await;
+
+            let meta_ans = s_type::from_slice::<HandlerMetaAns>(data.as_mut()).unwrap();
 
             receivers_mapped.insert(meta_ans.id, receiver.clone());
         }
@@ -102,6 +115,7 @@ impl ClientConnection {
     async fn process_requests(
         receivers_mapped: &HashMap<u64, Arc<Mutex<dyn Receiver>>>,
         socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
+        processor: &mut TrafficProcessorHolder
     ) {
         use futures_util::SinkExt;
 
@@ -115,11 +129,14 @@ impl ClientConnection {
                     has_payload: !payload.is_empty(),
                 };
 
-                let meta_bytes = s_type::to_vec(&meta).unwrap();
+                let meta_bytes = processor.post_process_traffic(s_type::to_vec(&meta).unwrap()).await;
+                let payload = processor.post_process_traffic(payload).await;
                 socket.lock().await.send(Bytes::from(meta_bytes)).await.unwrap();
                 println!("{}", payload.len());
                 socket.lock().await.send(Bytes::from(payload)).await.unwrap();
-                let response = Self::wait_for_data(socket).await;
+                let response = processor.pre_process_traffic(Self::wait_for_data(socket).await).await;
+
+
                 receiver_lock.receive_response(response);
             }
         }
@@ -127,13 +144,13 @@ impl ClientConnection {
 
     async fn wait_for_data(
         socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
-    ) -> Vec<u8> {
+    ) -> BytesMut {
         use futures_util::{StreamExt};
 
         let mut res = socket.lock().await.next().await;
         while res.is_none() {
             res = socket.lock().await.next().await;
         }
-        res.unwrap().unwrap().to_vec()
+        res.unwrap().unwrap()
     }
 }

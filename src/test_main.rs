@@ -5,7 +5,7 @@ pub mod util;
 
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
-use crate::server::tcp_server::{TcpServer, TrafficProcessorHolder};
+use crate::server::tcp_server::{TcpServer};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 use crate::testing::test_client::init_client;
@@ -24,6 +24,8 @@ use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use crate::structures::traffic_proc::TrafficProcessorHolder;
+use crate::testing::test_proc::TestProcessor;
 
 mod testing;
 
@@ -119,13 +121,15 @@ pub async fn main() {
     router.commit_routes();
     let router = Arc::new(router);
 
-    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, None).await;
+    let mut proc_holder = TrafficProcessorHolder::new();
+    proc_holder.register_processor(Box::new(TestProcessor::new()));
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder)).await;
 
     server.start().await;
     let mut client = init_client().await;
     client.start().await;
 
-    sleep(Duration::from_millis(1500)).await;
+    sleep(Duration::from_millis(150000)).await;
     server.send_stop();
     client.stop();
     println!("sended stop waiting before exit");

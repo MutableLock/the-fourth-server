@@ -10,6 +10,9 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio_util::bytes::BytesMut;
+use crate::structures::traffic_proc::TrafficProcessorHolder;
+use crate::testing::test_proc::TestProcessor;
 
 struct TestRecv {
     counter: Arc<Mutex<AtomicU64>>,
@@ -63,7 +66,7 @@ impl Receiver for TestRecv {
         Some(res)
     }
 
-    fn receive_response(&mut self, response: Vec<u8>) {
+    fn receive_response(&mut self, response: BytesMut) {
         let received = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -89,6 +92,9 @@ impl Receiver for TestRecv {
 }
 
 pub async fn init_client() -> ClientConnection {
+    let mut processor_holder = TrafficProcessorHolder::new();
+    processor_holder.register_processor(Box::new(TestProcessor::new()));
+
     let connection = ClientConnection::new(
         "127.0.0.1:3333".to_string(),
         vec![Arc::new(tokio::sync::Mutex::new(TestRecv {
@@ -96,6 +102,6 @@ pub async fn init_client() -> ClientConnection {
             response_send: Arc::new(Mutex::new(AtomicU64::new(0))),
             id: 0,
         }))],
-    ).await;
+    Some(processor_holder)).await;
     return connection;
 }
