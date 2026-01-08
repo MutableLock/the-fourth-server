@@ -25,7 +25,7 @@ use crate::testing::test_s_type::{InitialRequest, InitialResponse, PayloadReques
 mod testing;
 
 struct TestHandler{
-    moved_streams: Vec<Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>>,
+    moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
 }
 
 
@@ -92,8 +92,8 @@ impl Handler for TestHandler {
         None
     }
 
-    fn accept_stream(&mut self, mut stream: Vec<Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>>) {
-        self.moved_streams.append(&mut stream);
+    fn accept_stream(&mut self, add: SocketAddr, stream: Framed<TcpStream, LengthDelimitedCodec>) {
+        self.moved_streams.push(stream);
     }
 }
 #[tokio::main]
@@ -121,7 +121,7 @@ pub async fn main() {
     let mut client = init_client().await;
     client.start().await;
 
-    sleep(Duration::from_millis(150000)).await;
+    sleep(Duration::from_millis(1500)).await;
     server.lock().await.send_stop();
     client.stop();
     println!("sended stop waiting before exit");

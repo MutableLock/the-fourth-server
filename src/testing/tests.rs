@@ -1,32 +1,30 @@
-
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
 use crate::server::tcp_server::TcpServer;
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 
-use std::net::{SocketAddr};
-use std::sync::{Arc};
-use tokio::sync::Mutex;
-use tokio::time::sleep;
-use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crate::testing::test_client::init_client;
 use crate::testing::test_s_type::*;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use tokio::time::sleep;
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-struct TestHandler{
-    moved_streams: Vec<Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>>,
+struct TestHandler {
+    moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
 }
-
 
 impl Handler for TestHandler {
     fn serve_route(
         &mut self,
         _: SocketAddr,
         s_type: Box<dyn StructureType>,
-        mut data: BytesMut
+        mut data: BytesMut,
     ) -> Result<Bytes, Bytes> {
         let base_s_type = s_type.as_any().downcast_ref::<TestStructureType>().unwrap();
         if data.is_empty() {
@@ -84,17 +82,18 @@ impl Handler for TestHandler {
         None
     }
 
-    fn accept_stream(&mut self, mut stream: Vec<Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>>) {
-        self.moved_streams.append(&mut stream);
+    fn accept_stream(&mut self, add: SocketAddr, stream: Framed<TcpStream, LengthDelimitedCodec>) {
+        self.moved_streams.push(stream);
     }
 }
-
 
 #[tokio::test]
 async fn server_start() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
     router.add_route(
-        Arc::new(Mutex::new(TestHandler {moved_streams: Vec::new()})),
+        Arc::new(Mutex::new(TestHandler {
+            moved_streams: Vec::new(),
+        })),
         "TestHandler".to_string(),
         vec![
             Box::new(TestStructureType::InitialRequest),
@@ -105,11 +104,9 @@ async fn server_start() {
     router.commit_routes();
     let router = Arc::new(router);
 
-
-    let server = Arc::new(Mutex::new(TcpServer::new(
-        "127.0.0.1:3333".to_string(),
-        router,
-    ).await));
+    let server = Arc::new(Mutex::new(
+        TcpServer::new("127.0.0.1:3333".to_string(), router).await,
+    ));
 
     TcpServer::start(server.clone()).await;
 
@@ -120,12 +117,13 @@ async fn server_start() {
     println!("now the process will need to shutdown, if not this is trouble");
 }
 
-
 #[tokio::test]
 pub async fn server_start_and_client_request() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
     router.add_route(
-        Arc::new(Mutex::new(TestHandler {moved_streams: Vec::new()})),
+        Arc::new(Mutex::new(TestHandler {
+            moved_streams: Vec::new(),
+        })),
         "TestHandler".to_string(),
         vec![
             Box::new(TestStructureType::InitialRequest),
@@ -136,11 +134,9 @@ pub async fn server_start_and_client_request() {
     router.commit_routes();
     let router = Arc::new(router);
 
-
-    let server = Arc::new(Mutex::new(TcpServer::new(
-        "127.0.0.1:3333".to_string(),
-        router,
-    ).await));
+    let server = Arc::new(Mutex::new(
+        TcpServer::new("127.0.0.1:3333".to_string(), router).await,
+    ));
 
     TcpServer::start(server.clone()).await;
     let mut client = init_client().await;

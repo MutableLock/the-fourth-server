@@ -20,6 +20,6 @@ pub trait Handler: Send + Sync {
      */
     fn request_to_move_stream(&self) -> Option<Vec<SocketAddr>>;
 
-    fn accept_stream(&mut self, stream: Vec<Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>>);
+    fn accept_stream(&mut self, add: SocketAddr, stream: Framed<TcpStream, LengthDelimitedCodec>);
 
 }

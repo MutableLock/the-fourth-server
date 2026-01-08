@@ -71,6 +71,17 @@ impl TcpServerRouter {
         self.routes_commited = true;
     }
 
+    pub async fn get_move_requests(&self) -> Vec<(Arc<Mutex<dyn Handler>>, Vec<SocketAddr>)> {
+        let mut requests = Vec::new();
+
+        for (type_t, handler) in self.routes.iter() {
+            if let Some(mut res) =  handler.lock().await.request_to_move_stream(){
+                requests.push((handler.clone(), res));
+            }
+        }
+        requests
+    }
+
     pub fn get_routes(&self) -> Arc<HashMap<TypeTupple, Arc<Mutex<dyn Handler>>>> {
         self.routes.clone()
     }
