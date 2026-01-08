@@ -1,20 +1,28 @@
+pub mod util;
+pub mod structures;
+pub mod server;
+pub mod client;
 
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+pub use openssl;
+pub use bincode;
+pub use sha2;
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use tokio::time::sleep;
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
 use crate::server::tcp_server::TcpServer;
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
-
-use std::net::{SocketAddr};
-use std::sync::{Arc};
-use tokio::sync::Mutex;
-use tokio::time::sleep;
-use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crate::testing::test_client::init_client;
-use crate::testing::test_s_type::*;
+use crate::testing::test_s_type::{InitialRequest, InitialResponse, PayloadRequest, PayloadResponse, TestError, TestStructureType};
+
+mod testing;
 
 struct TestHandler{
     moved_streams: Vec<Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>>,
@@ -88,41 +96,8 @@ impl Handler for TestHandler {
         self.moved_streams.append(&mut stream);
     }
 }
-
-
-#[tokio::test]
-async fn server_start() {
-    let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
-    router.add_route(
-        Arc::new(Mutex::new(TestHandler {moved_streams: Vec::new()})),
-        "TestHandler".to_string(),
-        vec![
-            Box::new(TestStructureType::InitialRequest),
-            Box::new(TestStructureType::PayloadRequest),
-            Box::new(TestStructureType::HighPayloadRequest),
-        ],
-    );
-    router.commit_routes();
-    let router = Arc::new(router);
-
-
-    let server = Arc::new(Mutex::new(TcpServer::new(
-        "127.0.0.1:3333".to_string(),
-        router,
-    ).await));
-
-    TcpServer::start(server.clone()).await;
-
-    sleep(Duration::from_millis(50000)).await;
-    server.lock().await.send_stop();
-    println!("sended stop waiting before exit");
-    sleep(Duration::from_millis(50000)).await;
-    println!("now the process will need to shutdown, if not this is trouble");
-}
-
-
-#[tokio::test]
-pub async fn server_start_and_client_request() {
+#[tokio::main]
+pub async fn main() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
     router.add_route(
         Arc::new(Mutex::new(TestHandler {moved_streams: Vec::new()})),
@@ -146,7 +121,7 @@ pub async fn server_start_and_client_request() {
     let mut client = init_client().await;
     client.start().await;
 
-    sleep(Duration::from_millis(15000)).await;
+    sleep(Duration::from_millis(150000)).await;
     server.lock().await.send_stop();
     client.stop();
     println!("sended stop waiting before exit");

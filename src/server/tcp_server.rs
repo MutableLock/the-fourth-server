@@ -11,7 +11,9 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering::Relaxed},
 };
+use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 use futures_util::SinkExt;
@@ -71,13 +73,19 @@ impl TcpServer {
                 let _ = Self::accept_one_connection(&listener, &handle_sockets).await;
                 let sockets = handle_sockets.clone();
                 let router = router.clone();
+
+                if sockets.lock().await.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+
                 let to_spawn: Vec<_> = {
                     let mut sockets = sockets.lock().await;
                     sockets
                         .iter_mut()
                         .filter(|(_, data)| !data.in_handle.load(Relaxed))
                         .map(|(addr, data)| {
-                            data.in_handle.store(true, Relaxed);
+                            data.in_handle.store(true, Ordering::SeqCst);
                             (*addr, data.stream.clone(), data.in_handle.clone())
                         })
                         .collect()

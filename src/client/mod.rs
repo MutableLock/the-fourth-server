@@ -131,7 +131,7 @@ impl ClientConnection {
         use futures_util::{StreamExt};
 
         let mut res = socket.lock().await.next().await;
-        while res.is_some() {
+        while res.is_none() {
             res = socket.lock().await.next().await;
         }
         res.unwrap().unwrap().to_vec()
