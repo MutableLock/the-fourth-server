@@ -82,7 +82,7 @@ impl TcpServerRouter {
         meta: BytesMut,
         payload: BytesMut,
         client_meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
-    ) -> Result<Bytes, ServerError> {
+    ) -> Result<Vec<u8>, ServerError> {
         // Try to deserialize normal PacketMeta
         if let Ok(meta_pack) = s_type::from_slice::<PacketMeta>(&meta) {
             let s_type = self.user_s_type.get_deserialize_function().deref()(meta_pack.s_type_req);
@@ -113,7 +113,7 @@ impl TcpServerRouter {
                     s_type: SystemSType::HandlerMetaAns,
                     id: *route_id,
                 };
-                return Ok(Bytes::from(s_type::to_vec(&meta_ans).unwrap()));
+                return Ok(s_type::to_vec(&meta_ans).unwrap());
             } else {
                 return Err(ServerError::new(ServerErrorEn::NoSuchHandler(None)));
             }

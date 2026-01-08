@@ -25,61 +25,57 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-/*
-#[derive(Clone)]
-struct StreamData {
-    stream: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
-    in_handle: Arc<AtomicBool>,
-    processors: Arc<TrafficProcessorHolder>,
-}
-
-impl StreamData {
-    pub async fn send(&self, message: BytesMut) {
-        let message = self.processors.post_process_traffic(message).await.freeze();
-        self.stream.lock().await.send(message).await.unwrap();
-    }
-    pub async fn next(&self) -> Option<Result<BytesMut, Error>> {
-        let msg = self.stream.lock().await.next().await?;
-        if msg.is_err() {
-            return Some(Err(msg.unwrap_err()));
-        }
-        let msg = msg.unwrap();
-        Some(Ok(self.processors.pre_process_traffic(msg).await))
-    }
-}
-
-
-pub trait TrafficProcess {
-    fn initial_connect(&mut self, source: Arc<Mutex<TcpStream>>);
-    fn post_process_traffic(&mut self, data: BytesMut) -> BytesMut;
+pub trait TrafficProcess: Send + Sync {
+    fn initial_connect(&mut self, source: &mut TcpStream);
+    fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
     fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
+
+    fn clone(&self) -> Box<dyn TrafficProcess>;
 }
 
-struct TrafficProcessorHolder {
-    processors: Vec<Arc<Mutex<dyn TrafficProcess>>>,
-    base_stream: Arc<Mutex<TcpStream>>,
+pub struct TrafficProcessorHolder {
+    processors: Vec<Box<dyn TrafficProcess>>,
+}
+
+impl Clone for TrafficProcessorHolder {
+    fn clone(&self) -> Self {
+        let mut processors = Vec::new();
+        self.processors
+            .iter()
+            .for_each(|p| processors.push(p.as_ref().clone()));
+
+        Self { processors }
+    }
 }
 
 impl TrafficProcessorHolder {
-    fn initial_connect(&mut self, source: Arc<Mutex<TcpStream>>) {
-        todo!()
+    pub fn new() -> Self {
+        TrafficProcessorHolder { processors: vec![] }
+    }
+    pub fn register_processor(&mut self, processor: Box<dyn TrafficProcess>) {
+        self.processors.push(processor);
     }
 
-    pub async fn post_process_traffic(&self, mut data: BytesMut) -> BytesMut {
-        for proc in self.processors.iter() {
-            data = proc.lock().await.post_process_traffic(data);
+    async fn initial_connect(&mut self, source: &mut TcpStream) {
+        for processor in self.processors.iter_mut() {
+            processor.as_mut().initial_connect(source);
+        }
+    }
+
+    async fn post_process_traffic(&mut self, mut data: Vec<u8>) -> Vec<u8> {
+        for proc in self.processors.iter_mut() {
+            data = proc.post_process_traffic(data);
         }
         data
     }
 
-    pub async fn pre_process_traffic(&self, mut data: BytesMut) -> BytesMut {
-        for proc in self.processors.iter() {
-            data = proc.lock().await.pre_process_traffic(data);
+    async fn pre_process_traffic(&mut self, mut data: BytesMut) -> BytesMut {
+        for proc in self.processors.iter_mut() {
+            data = proc.pre_process_traffic(data);
         }
         data
     }
 }
-*/
 
 pub type RequestChannel = (
     Sender<Arc<Mutex<dyn Handler>>>,
@@ -90,10 +86,15 @@ pub struct TcpServer {
     router: Arc<TcpServerRouter>,
     socket: Arc<TcpListener>,
     shutdown_sig: Arc<Notify>,
+    processor: Option<TrafficProcessorHolder>,
 }
 
 impl TcpServer {
-    pub async fn new(bind_address: String, router: Arc<TcpServerRouter>) -> Self {
+    pub async fn new(
+        bind_address: String,
+        router: Arc<TcpServerRouter>,
+        processor: Option<TrafficProcessorHolder>,
+    ) -> Self {
         Self {
             router,
             socket: Arc::new(
@@ -102,30 +103,37 @@ impl TcpServer {
                     .expect("Failed to bind to address"),
             ),
             shutdown_sig: Arc::new(Notify::new()),
+            processor,
         }
     }
 
-    pub async fn start(self_ref: Arc<Self>) {
+    pub async fn start(&mut self) {
         let (listener, router, shutdown_sig) = {
-            let s = self_ref;
             (
-                s.socket.clone(),
-                s.router.clone(),
-                s.shutdown_sig.clone(),
+                self.socket.clone(),
+                self.router.clone(),
+                self.shutdown_sig.clone(),
             )
         };
-
+        let mut processor = if let Some(proc) = self.processor.take() {
+            proc
+        } else {
+            TrafficProcessorHolder::new()
+        };
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     res = listener.accept() => { if res.is_ok() {
-                                    let stream = res.unwrap();
+                                    let mut stream = res.unwrap();
+                                    processor.initial_connect(&mut stream.0).await;
                                     let framed = Framed::new(stream.0, LengthDelimitedCodec::new());
-                                let router = router.clone();
-                                tokio::spawn(async move {
-                                    Self::handle_connection(stream.1, framed, router.as_ref()).await;
-                                });
-                                } }
+                                    let router = router.clone();
+                                    let prc_clone = processor.clone();
+                                    tokio::spawn(async move {
+                                        Self::handle_connection(stream.1, framed, router.as_ref(), prc_clone).await;
+                                    });
+                                } 
+                    }
                     _ = shutdown_sig.notified() => break,
                 }
             }
@@ -140,13 +148,14 @@ impl TcpServer {
         addr: SocketAddr,
         mut stream: Framed<TcpStream, LengthDelimitedCodec>,
         router: &TcpServerRouter,
+        mut processor: TrafficProcessorHolder,
     ) {
         use futures_util::SinkExt;
         let mut move_sig = tokio::sync::oneshot::channel::<Arc<Mutex<dyn Handler>>>();
         let mut move_sig = (Some(move_sig.0), move_sig.1);
         loop {
             let meta_data: Result<Option<BytesMut>, bool> =
-                receive_message(addr.clone(), &mut stream).await;
+                receive_message(addr.clone(), &mut stream, &mut processor).await;
             if meta_data.is_err() {
                 if meta_data.unwrap_err() {
                     stream.close().await.unwrap();
@@ -167,7 +176,7 @@ impl TcpServer {
 
             let mut payload: BytesMut = BytesMut::new();
             if has_payload {
-                let payload_res = receive_message(addr.clone(), &mut stream).await;
+                let payload_res = receive_message(addr.clone(), &mut stream, &mut processor).await;
                 if payload_res.is_err() {
                     if payload_res.unwrap_err() {
                         stream.close().await.unwrap();
@@ -186,11 +195,10 @@ impl TcpServer {
                 .serve_packet(meta_data, payload, (addr, &mut move_sig.0))
                 .await;
 
-            let message = res.unwrap_or_else(|err| Bytes::from(s_type::to_vec(&err).unwrap()));
-            let res = stream.send(message).await;
-
+            let message = res.unwrap_or_else(|err| s_type::to_vec(&err).unwrap());
+            let res = send_message(&mut stream, message, &mut processor).await;
             if let Ok(requester) = move_sig.1.try_recv() {
-                requester.lock().await.accept_stream(addr, stream);
+                requester.lock().await.accept_stream(addr, (stream, processor.clone()));
                 return;
             }
 
@@ -205,14 +213,25 @@ impl TcpServer {
     }
 }
 
+async fn send_message(
+    stream: &mut Framed<TcpStream, LengthDelimitedCodec>,
+    message: Vec<u8>,
+    processor: &mut TrafficProcessorHolder,
+) -> Result<(), io::Error> {
+    let message = Bytes::from(processor.post_process_traffic(message).await);
+    stream.send(message).await
+}
+
 async fn receive_message(
     addr: SocketAddr,
     stream: &mut Framed<TcpStream, LengthDelimitedCodec>,
+    processor: &mut TrafficProcessorHolder,
 ) -> Result<Option<BytesMut>, bool> {
     use futures_util::StreamExt;
     match stream.next().await {
         Some(data) => match data {
-            Ok(data) => {
+            Ok(mut data) => {
+                data = processor.pre_process_traffic(data).await;
                 return Ok(Some(data));
             }
             Err(e) => {

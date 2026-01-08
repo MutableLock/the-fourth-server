@@ -1,6 +1,6 @@
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
-use crate::server::tcp_server::TcpServer;
+use crate::server::tcp_server::{TcpServer, TrafficProcessorHolder};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 
@@ -26,7 +26,7 @@ impl Handler for TestHandler {
         cli_meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
         mut data: BytesMut,
-    ) -> Result<Bytes, Bytes> {
+    ) -> Result<Vec<u8>, Vec<u8>> {
         let base_s_type = s_type.as_any().downcast_ref::<TestStructureType>().unwrap();
         if data.is_empty() {
             let test_error = TestError {
@@ -79,8 +79,8 @@ impl Handler for TestHandler {
         }
     }
 
-    fn accept_stream(&mut self, add: SocketAddr, stream: Framed<TcpStream, LengthDelimitedCodec>) {
-        self.moved_streams.push(stream);
+    fn accept_stream(&mut self, add: SocketAddr, stream: (Framed<tokio::net::TcpStream, LengthDelimitedCodec>, TrafficProcessorHolder)) {
+        self.moved_streams.push(stream.0);
     }
 }
 
@@ -101,11 +101,9 @@ async fn server_start() {
     router.commit_routes();
     let router = Arc::new(router);
 
-    let server = Arc::new(
-        TcpServer::new("127.0.0.1:3333".to_string(), router).await,
-    );
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, None).await;
 
-    TcpServer::start(server.clone()).await;
+    server.start().await;
 
     sleep(Duration::from_millis(50000)).await;
     server.send_stop();
@@ -131,11 +129,9 @@ pub async fn server_start_and_client_request() {
     router.commit_routes();
     let router = Arc::new(router);
 
-    let server = Arc::new(
-        TcpServer::new("127.0.0.1:3333".to_string(), router).await,
-    );
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, None).await;
 
-    TcpServer::start(server.clone()).await;
+    server.start().await;
     let mut client = init_client().await;
     client.start().await;
 

@@ -1,45 +1,44 @@
-pub mod util;
-pub mod structures;
-pub mod server;
 pub mod client;
+pub mod server;
+pub mod structures;
+pub mod util;
 
+use crate::server::handler::Handler;
+use crate::server::server_router::TcpServerRouter;
+use crate::server::tcp_server::{TcpServer, TrafficProcessorHolder};
+use crate::structures::s_type;
+use crate::structures::s_type::StructureType;
+use crate::testing::test_client::init_client;
+use crate::testing::test_s_type::{
+    InitialRequest, InitialResponse, PayloadRequest, PayloadResponse, TestError, TestStructureType,
+};
+pub use bincode;
+pub use openssl;
+pub use sha2;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-pub use openssl;
-pub use bincode;
-pub use sha2;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use crate::server::handler::Handler;
-use crate::server::server_router::TcpServerRouter;
-use crate::server::tcp_server::TcpServer;
-use crate::structures::s_type;
-use crate::structures::s_type::StructureType;
-use crate::testing::test_client::init_client;
-use crate::testing::test_s_type::{InitialRequest, InitialResponse, PayloadRequest, PayloadResponse, TestError, TestStructureType};
 
 mod testing;
 
-struct TestHandler{
+struct TestHandler {
     moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
 }
-
 
 impl Handler for TestHandler {
     fn serve_route(
         &mut self,
-        meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
+        meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
-        mut data: BytesMut
-    ) -> Result<Bytes, Bytes> {
+        mut data: BytesMut,
+    ) -> Result<Vec<u8>, Vec<u8>> {
         let base_s_type = s_type.as_any().downcast_ref::<TestStructureType>().unwrap();
-
-
 
         if data.is_empty() {
             let test_error = TestError {
@@ -58,7 +57,7 @@ impl Handler for TestHandler {
                     response: request.request * 5,
                 };
                 println!("Success server");
-                return Ok(s_type::to_vec(&response).unwrap().into());
+                return Ok(s_type::to_vec(&response).unwrap());
             }
             TestStructureType::PayloadRequest => {
                 let request = s_type::from_slice::<PayloadRequest>(data.as_mut()).unwrap();
@@ -69,7 +68,7 @@ impl Handler for TestHandler {
                 };
                 response.medium_payload.sort();
                 println!("Success server");
-                return Ok(s_type::to_vec(&response).unwrap().into());
+                return Ok(s_type::to_vec(&response).unwrap());
             }
             TestStructureType::HighPayloadRequest => {
                 //let request = s_type::from_slice::<HighPayloadRequest>(data.as_slice()).unwrap();
@@ -79,7 +78,7 @@ impl Handler for TestHandler {
                     error: "TestError".to_string(),
                 };
                 println!("Success server");
-                return Err(s_type::to_vec(&test_error).unwrap().into());
+                return Err(s_type::to_vec(&test_error).unwrap());
             }
             _ => {
                 let test_error = TestError {
@@ -87,20 +86,29 @@ impl Handler for TestHandler {
                     error: "TestError".to_string(),
                 };
                 println!("Success server");
-                return Err(s_type::to_vec(&test_error).unwrap().into());
+                return Err(s_type::to_vec(&test_error).unwrap());
             }
         }
     }
 
-    fn accept_stream(&mut self, add: SocketAddr, stream: Framed<TcpStream, LengthDelimitedCodec>) {
-        self.moved_streams.push(stream);
+    fn accept_stream(
+        &mut self,
+        add: SocketAddr,
+        stream: (
+            Framed<tokio::net::TcpStream, LengthDelimitedCodec>,
+            TrafficProcessorHolder,
+        ),
+    ) {
+        self.moved_streams.push(stream.0);
     }
 }
 #[tokio::main]
 pub async fn main() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
     router.add_route(
-        Arc::new(Mutex::new(TestHandler {moved_streams: Vec::new()})),
+        Arc::new(Mutex::new(TestHandler {
+            moved_streams: Vec::new(),
+        })),
         "TestHandler".to_string(),
         vec![
             Box::new(TestStructureType::InitialRequest),
@@ -111,13 +119,9 @@ pub async fn main() {
     router.commit_routes();
     let router = Arc::new(router);
 
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, None).await;
 
-    let server = Arc::new(TcpServer::new(
-        "127.0.0.1:3333".to_string(),
-        router,
-    ).await);
-
-    TcpServer::start(server.clone()).await;
+    server.start().await;
     let mut client = init_client().await;
     client.start().await;
 
