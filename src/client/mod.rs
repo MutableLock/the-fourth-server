@@ -40,7 +40,9 @@ impl ClientConnection {
     pub async fn new(connection_dest: String, receivers: Vec<Arc<Mutex<dyn Receiver>>>, mut processor: Option<TrafficProcessorHolder>) -> Self {
         let mut socket = TcpStream::connect(connection_dest).await.unwrap();
         if processor.is_some() {
-            processor.as_mut().unwrap().initial_connect(&mut socket).await;
+            if !processor.as_mut().unwrap().initial_connect(&mut socket).await{
+                panic!("Failed to connect to processor");
+            }
         }
         let socket = Framed::new(socket, LengthDelimitedCodec::new());
 

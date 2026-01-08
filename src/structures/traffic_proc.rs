@@ -2,7 +2,7 @@ use tokio::net::TcpStream;
 use tokio_util::bytes::BytesMut;
 
 pub trait TrafficProcess: Send + Sync {
-    fn initial_connect(&mut self, source: &mut TcpStream);
+    fn initial_connect(&mut self, source: &mut TcpStream) -> bool;
     fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
     fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
 
@@ -32,10 +32,13 @@ impl TrafficProcessorHolder {
         self.processors.push(processor);
     }
 
-    pub async fn initial_connect(&mut self, source: &mut TcpStream) {
+    pub async fn initial_connect(&mut self, source: &mut TcpStream) -> bool{
         for processor in self.processors.iter_mut() {
-            processor.as_mut().initial_connect(source);
+            if !processor.as_mut().initial_connect(source){
+                return false;
+            }
         }
+        true
     }
 
     pub async fn post_process_traffic(&mut self, mut data: Vec<u8>) -> Vec<u8> {

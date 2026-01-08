@@ -18,13 +18,14 @@ use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 
 use crate::server::handler::Handler;
+use crate::structures::traffic_proc::TrafficProcessorHolder;
 use futures_util::{SinkExt, StreamExt};
 use tokio::io;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use crate::structures::traffic_proc::TrafficProcessorHolder;
 
 pub type RequestChannel = (
     Sender<Arc<Mutex<dyn Handler>>>,
@@ -74,14 +75,18 @@ impl TcpServer {
                 tokio::select! {
                     res = listener.accept() => { if res.is_ok() {
                                     let mut stream = res.unwrap();
-                                    processor.initial_connect(&mut stream.0).await;
-                                    let framed = Framed::new(stream.0, LengthDelimitedCodec::new());
+                                    if processor.initial_connect(&mut stream.0).await {
+                            let framed = Framed::new(stream.0, LengthDelimitedCodec::new());
                                     let router = router.clone();
                                     let prc_clone = processor.clone();
                                     tokio::spawn(async move {
                                         Self::handle_connection(stream.1, framed, router.as_ref(), prc_clone).await;
                                     });
-                                } 
+                        } else {
+                            stream.0.shutdown().await;
+                        }
+
+                                }
                     }
                     _ = shutdown_sig.notified() => break,
                 }
@@ -147,7 +152,10 @@ impl TcpServer {
             let message = res.unwrap_or_else(|err| s_type::to_vec(&err).unwrap());
             let res = send_message(&mut stream, message, &mut processor).await;
             if let Ok(requester) = move_sig.1.try_recv() {
-                requester.lock().await.accept_stream(addr, (stream, processor.clone()));
+                requester
+                    .lock()
+                    .await
+                    .accept_stream(addr, (stream, processor.clone()));
                 return;
             }
 

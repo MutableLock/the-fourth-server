@@ -13,8 +13,8 @@ impl TestProcessor {
 }
 
 impl TrafficProcess for TestProcessor {
-    fn initial_connect(&mut self, source: &mut TcpStream) {
-
+    fn initial_connect(&mut self, source: &mut TcpStream) -> bool {
+        return true;
     }
 
     fn post_process_traffic(&mut self, mut data: Vec<u8>) -> Vec<u8> {
