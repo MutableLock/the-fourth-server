@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Relaxed, Release};
 use std::time::Duration;
+use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -22,11 +23,11 @@ pub struct ClientConnection {
     current_thread: Option<JoinHandle<()>>,
     processor: Option<TrafficProcessorHolder>,
 }
-
+#[async_trait]
 pub trait Receiver: Send + Sync {
-    fn get_handler_name(&self) -> String;
-    fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)>;
-    fn receive_response(&mut self, response: BytesMut);
+    async fn get_handler_name(&self) -> String;
+    async fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)>;
+    async fn receive_response(&mut self, response: BytesMut);
 }
 
 impl ClientConnection {
@@ -124,7 +125,7 @@ impl ClientConnection {
         for receiver in receivers.iter() {
             let meta_req = HandlerMetaReq {
                 s_type: SystemSType::HandlerMetaReq,
-                handler_name: receiver.lock().await.get_handler_name(),
+                handler_name: receiver.lock().await.get_handler_name().await,
             };
 
             let data = s_type::to_vec(&meta_req).unwrap();
@@ -156,7 +157,7 @@ impl ClientConnection {
 
         for (handler_id, receiver) in receivers_mapped.iter() {
             let mut receiver_lock = receiver.lock().await;
-            if let Some((payload, structure)) = receiver_lock.get_request() {
+            if let Some((payload, structure)) = receiver_lock.get_request().await {
                 let meta = PacketMeta {
                     s_type: SystemSType::PacketMeta,
                     s_type_req: structure.get_serialize_function()(structure.clone_unique()),
@@ -185,7 +186,7 @@ impl ClientConnection {
                     .pre_process_traffic(Self::wait_for_data(socket).await)
                     .await;
 
-                receiver_lock.receive_response(response);
+                receiver_lock.receive_response(response).await;
             }
         }
     }

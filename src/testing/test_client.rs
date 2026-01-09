@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use async_trait::async_trait;
 use tokio_util::bytes::BytesMut;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::testing::test_proc::TestProcessor;
@@ -19,14 +20,14 @@ struct TestRecv {
     response_send: Arc<Mutex<AtomicU64>>,
     id: u64,
 }
-
+#[async_trait]
 impl Receiver for TestRecv {
-    fn get_handler_name(&self) -> String {
+    async fn get_handler_name(&self) -> String {
         String::from("TestHandler")
     }
 
 
-    fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)> {
+    async fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)> {
         let res: (Vec<u8>, Box<dyn StructureType>) =
             if self.counter.lock().unwrap().load(Relaxed) % 2 == 0 {
                 let pre_val = InitialRequest {
@@ -66,7 +67,7 @@ impl Receiver for TestRecv {
         Some(res)
     }
 
-    fn receive_response(&mut self, response: BytesMut) {
+    async fn receive_response(&mut self, response: BytesMut) {
         let received = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
