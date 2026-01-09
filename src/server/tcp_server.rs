@@ -2,24 +2,17 @@ use crate::server::server_router::TcpServerRouter;
 use crate::structures::s_type;
 use crate::structures::s_type::ServerErrorEn::InternalError;
 use crate::structures::s_type::{PacketMeta, ServerErrorEn};
-use std::collections::HashMap;
 use std::fmt;
-use std::io::{Error, Read, Write};
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering::Relaxed},
 };
-use std::task::{Context, Poll};
-use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 
 use crate::server::handler::Handler;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt};
 use tokio::io;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -76,14 +69,17 @@ impl TcpServer {
                     res = listener.accept() => { if res.is_ok() {
                                     let mut stream = res.unwrap();
                                     if processor.initial_connect(&mut stream.0).await {
-                            let framed = Framed::new(stream.0, LengthDelimitedCodec::new());
-                                    let router = router.clone();
+                            let mut framed = Framed::new(stream.0, LengthDelimitedCodec::new());
+                            if processor.initial_framed_connect(&mut framed).await {
+                                let router = router.clone();
                                     let prc_clone = processor.clone();
                                     tokio::spawn(async move {
                                         Self::handle_connection(stream.1, framed, router.as_ref(), prc_clone).await;
                                     });
+                            }
+                                    
                         } else {
-                            stream.0.shutdown().await;
+                            let _ = stream.0.shutdown().await;
                         }
 
                                 }
@@ -105,7 +101,7 @@ impl TcpServer {
         mut processor: TrafficProcessorHolder,
     ) {
         use futures_util::SinkExt;
-        let mut move_sig = tokio::sync::oneshot::channel::<Arc<Mutex<dyn Handler>>>();
+        let move_sig = tokio::sync::oneshot::channel::<Arc<Mutex<dyn Handler>>>();
         let mut move_sig = (Some(move_sig.0), move_sig.1);
         loop {
             let meta_data: Result<Option<BytesMut>, bool> =
@@ -180,7 +176,7 @@ async fn send_message(
 }
 
 async fn receive_message(
-    addr: SocketAddr,
+    _: SocketAddr,
     stream: &mut Framed<TcpStream, LengthDelimitedCodec>,
     processor: &mut TrafficProcessorHolder,
 ) -> Result<Option<BytesMut>, bool> {

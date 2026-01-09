@@ -1,10 +1,13 @@
+use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tokio_util::bytes::BytesMut;
-
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+#[async_trait]
 pub trait TrafficProcess: Send + Sync {
-    fn initial_connect(&mut self, source: &mut TcpStream) -> bool;
-    fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
-    fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
+    async fn initial_connect(&mut self, source: &mut TcpStream) -> bool;
+    async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, LengthDelimitedCodec>) -> bool;
+    async fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
+    async fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
 
     fn clone(&self) -> Box<dyn TrafficProcess>;
 }
@@ -34,7 +37,16 @@ impl TrafficProcessorHolder {
 
     pub async fn initial_connect(&mut self, source: &mut TcpStream) -> bool{
         for processor in self.processors.iter_mut() {
-            if !processor.as_mut().initial_connect(source){
+            if !processor.as_mut().initial_connect(source).await{
+                return false;
+            }
+        }
+        true
+    }
+
+    pub async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, LengthDelimitedCodec>) -> bool {
+        for processor in self.processors.iter_mut() {
+            if !processor.as_mut().initial_framed_connect(source).await{
                 return false;
             }
         }
@@ -43,14 +55,14 @@ impl TrafficProcessorHolder {
 
     pub async fn post_process_traffic(&mut self, mut data: Vec<u8>) -> Vec<u8> {
         for proc in self.processors.iter_mut() {
-            data = proc.post_process_traffic(data);
+            data = proc.post_process_traffic(data).await;
         }
         data
     }
 
     pub async fn pre_process_traffic(&mut self, mut data: BytesMut) -> BytesMut {
         for proc in self.processors.iter_mut() {
-            data = proc.pre_process_traffic(data);
+            data = proc.pre_process_traffic(data).await;
         }
         data
     }

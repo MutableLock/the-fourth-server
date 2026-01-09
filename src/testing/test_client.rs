@@ -1,4 +1,4 @@
-
+#![allow(dead_code)]
 use crate::client::{ClientConnection, Receiver};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;

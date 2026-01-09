@@ -22,7 +22,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
-use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::bytes::{BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::testing::test_proc::TestProcessor;
@@ -36,7 +36,7 @@ struct TestHandler {
 impl Handler for TestHandler {
     fn serve_route(
         &mut self,
-        meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
+        _: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
         mut data: BytesMut,
     ) -> Result<Vec<u8>, Vec<u8>> {
@@ -95,7 +95,7 @@ impl Handler for TestHandler {
 
     fn accept_stream(
         &mut self,
-        add: SocketAddr,
+        _: SocketAddr,
         stream: (
             Framed<tokio::net::TcpStream, LengthDelimitedCodec>,
             TrafficProcessorHolder,

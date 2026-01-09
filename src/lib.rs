@@ -9,5 +9,7 @@ pub use sha2;
 
 mod testing;
 
+pub use async_trait;
+pub use tokio;
 
 

@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::{Arc};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot::Sender;
-use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::bytes::{BytesMut};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crate::structures::s_type::StructureType;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
