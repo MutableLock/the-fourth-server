@@ -151,7 +151,7 @@ impl TcpServer {
                 requester
                     .lock()
                     .await
-                    .accept_stream(addr, (stream, processor.clone()));
+                    .accept_stream(addr, (stream, processor.clone())).await;
                 return;
             }
 

@@ -93,12 +93,12 @@ impl TcpServerRouter {
 
             let handler = self.routes.get(&key).ok_or(ServerError::new(ServerErrorEn::NoSuchHandler(None)))?;
             let mut handler_lock = handler.lock().await;
-            let res = catch_unwind(AssertUnwindSafe(|| {
-                handler_lock.serve_route(client_meta, s_type, payload)
+            let res = catch_unwind(AssertUnwindSafe(async || {
+                handler_lock.serve_route(client_meta, s_type, payload).await
             }));
 
             return match res {
-                Ok(data) => match data{
+                Ok(data) => match data.await{
                     Ok(data) => Ok(data),
                     Err(err) => {Err(ServerError::new(ServerErrorEn::InternalError(Some(err.to_vec()))))}
                 },

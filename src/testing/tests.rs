@@ -9,6 +9,7 @@ use crate::testing::test_s_type::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
@@ -21,9 +22,9 @@ use crate::testing::test_proc::TestProcessor;
 struct TestHandler {
     moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
 }
-
+#[async_trait]
 impl Handler for TestHandler {
-    fn serve_route(
+    async fn serve_route(
         &mut self,
         cli_meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
@@ -81,7 +82,7 @@ impl Handler for TestHandler {
         }
     }
 
-    fn accept_stream(&mut self, add: SocketAddr, stream: (Framed<tokio::net::TcpStream, LengthDelimitedCodec>, TrafficProcessorHolder)) {
+    async fn accept_stream(&mut self, add: SocketAddr, stream: (Framed<tokio::net::TcpStream, LengthDelimitedCodec>, TrafficProcessorHolder)) {
         self.moved_streams.push(stream.0);
     }
 }

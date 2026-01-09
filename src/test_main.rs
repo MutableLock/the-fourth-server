@@ -18,6 +18,7 @@ pub use sha2;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
@@ -32,9 +33,9 @@ mod testing;
 struct TestHandler {
     moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
 }
-
+#[async_trait]
 impl Handler for TestHandler {
-    fn serve_route(
+    async fn serve_route(
         &mut self,
         _: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
         s_type: Box<dyn StructureType>,
@@ -93,7 +94,7 @@ impl Handler for TestHandler {
         }
     }
 
-    fn accept_stream(
+    async fn accept_stream(
         &mut self,
         _: SocketAddr,
         stream: (
