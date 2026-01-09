@@ -6,10 +6,11 @@ pub mod client;
 pub use openssl;
 pub use bincode;
 pub use sha2;
-
-mod testing;
-
 pub use async_trait;
 pub use tokio;
+pub use tokio_util;
+pub use futures_util;
+pub use rand;
+mod testing;
 
 
