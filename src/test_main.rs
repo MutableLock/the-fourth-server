@@ -8,7 +8,6 @@ use crate::server::server_router::TcpServerRouter;
 use crate::server::tcp_server::{TcpServer};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
-use crate::testing::test_client::init_client;
 use crate::testing::test_s_type::{
     InitialRequest, InitialResponse, PayloadRequest, PayloadResponse, TestError, TestStructureType,
 };
@@ -127,12 +126,10 @@ pub async fn main() {
     let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder)).await;
 
     server.start().await;
-    let mut client = init_client().await;
-    client.start().await;
+   
 
-    sleep(Duration::from_millis(150000)).await;
+    sleep(Duration::from_millis(600000)).await;
     server.send_stop();
-    client.stop();
     println!("sended stop waiting before exit");
     sleep(Duration::from_millis(1500)).await;
     println!("now the process will need to shutdown, if not this is trouble");

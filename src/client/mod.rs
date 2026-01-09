@@ -42,6 +42,7 @@ impl ClientConnection {
         mut processor: Option<TrafficProcessorHolder>,
     ) -> Self {
         let mut socket = TcpStream::connect(connection_dest).await.unwrap();
+        socket.set_nodelay(true).unwrap();
         if processor.is_some() {
             if !processor
                 .as_mut()

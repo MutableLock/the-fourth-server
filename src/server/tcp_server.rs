@@ -8,6 +8,7 @@ use std::ops::Deref;
 use std::sync::{
     Arc,
 };
+use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 
 use crate::server::handler::Handler;
@@ -68,6 +69,7 @@ impl TcpServer {
                 tokio::select! {
                     res = listener.accept() => { if res.is_ok() {
                                     let mut stream = res.unwrap();
+                        stream.0.set_nodelay(true).unwrap();
                                     if processor.initial_connect(&mut stream.0).await {
                             let mut framed = Framed::new(stream.0, LengthDelimitedCodec::new());
                             if processor.initial_framed_connect(&mut framed).await {
@@ -113,11 +115,11 @@ impl TcpServer {
                 }
                 continue;
             }
+
             let meta_data = meta_data.unwrap();
             if meta_data.is_none() {
                 continue;
             }
-
             let meta_data = meta_data.unwrap();
             let has_payload = match s_type::from_slice::<PacketMeta>(meta_data.deref()) {
                 Ok(meta) => meta.has_payload,
@@ -147,6 +149,7 @@ impl TcpServer {
 
             let message = res.unwrap_or_else(|err| s_type::to_vec(&err).unwrap());
             let res = send_message(&mut stream, message, &mut processor).await;
+
             if let Ok(requester) = move_sig.1.try_recv() {
                 requester
                     .lock()

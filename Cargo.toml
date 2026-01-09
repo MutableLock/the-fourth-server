@@ -12,6 +12,10 @@ crate-type = ["rlib"]
 name = "tfserver-runtime-test"
 path="src/test_main.rs"
 
+[[bin]]
+name = "tfserver-client-test"
+path="src/test_client.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 openssl = "0.10"
