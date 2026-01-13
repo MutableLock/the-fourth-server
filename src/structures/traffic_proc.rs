@@ -1,22 +1,25 @@
 use async_trait::async_trait;
+use tokio::io;
 use tokio::net::TcpStream;
-use tokio_util::bytes::BytesMut;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 #[async_trait]
 pub trait TrafficProcess: Send + Sync {
+    type Codec;
     async fn initial_connect(&mut self, source: &mut TcpStream) -> bool;
-    async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, LengthDelimitedCodec>) -> bool;
+    async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, Self::Codec>) -> bool;
     async fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
     async fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
 
-    fn clone(&self) -> Box<dyn TrafficProcess>;
+    fn clone(&self) -> Box<dyn TrafficProcess<Codec = Self::Codec>>;
 }
 
-pub struct TrafficProcessorHolder {
-    processors: Vec<Box<dyn TrafficProcess>>,
+pub struct TrafficProcessorHolder<C> where  C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static
+{
+    processors: Vec<Box<dyn TrafficProcess<Codec = C>>>,
 }
 
-impl Clone for TrafficProcessorHolder {
+impl<C> Clone for TrafficProcessorHolder<C>  where C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static{
     fn clone(&self) -> Self {
         let mut processors = Vec::new();
         self.processors
@@ -27,11 +30,12 @@ impl Clone for TrafficProcessorHolder {
     }
 }
 
-impl TrafficProcessorHolder {
+impl<C> TrafficProcessorHolder<C> where
+C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static {
     pub fn new() -> Self {
         TrafficProcessorHolder { processors: vec![] }
     }
-    pub fn register_processor(&mut self, processor: Box<dyn TrafficProcess>) {
+    pub fn register_processor(&mut self, processor: Box<dyn TrafficProcess<Codec = C>>) {
         self.processors.push(processor);
     }
 
@@ -44,7 +48,7 @@ impl TrafficProcessorHolder {
         true
     }
 
-    pub async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, LengthDelimitedCodec>) -> bool {
+    pub async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, C>) -> bool {
         for processor in self.processors.iter_mut() {
             if !processor.as_mut().initial_framed_connect(source).await{
                 return false;

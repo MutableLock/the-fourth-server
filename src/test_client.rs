@@ -6,12 +6,13 @@ pub mod testing;
 
 use std::time::Duration;
 use tokio::time::sleep;
+use tokio_util::codec::LengthDelimitedCodec;
 use crate::testing::test_client::init_client;
 
 
 #[tokio::main]
 pub async fn main() {
-    let mut client = init_client().await;
+    let mut client = init_client(LengthDelimitedCodec::new()).await;
     client.start().await;
     sleep(Duration::from_millis(600000)).await;
 

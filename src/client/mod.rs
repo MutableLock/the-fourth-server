@@ -5,6 +5,7 @@ use crate::structures::s_type::{
 };
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use std::collections::HashMap;
+use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Relaxed, Release};
@@ -14,14 +15,21 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 
-pub struct ClientConnection {
-    socket: Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
+pub struct ClientConnection<C>
+where
+    C: Encoder<Bytes, Error = io::Error>
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Clone
+    + Send
+    + Sync
+    + 'static, {
+    socket: Arc<Mutex<Framed<TcpStream, C>>>,
     receivers: Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
     running: Arc<AtomicBool>,
     current_thread: Option<JoinHandle<()>>,
-    processor: Option<TrafficProcessorHolder>,
+    processor: Option<TrafficProcessorHolder<C>>,
 }
 #[async_trait]
 pub trait Receiver: Send + Sync {
@@ -30,7 +38,14 @@ pub trait Receiver: Send + Sync {
     async fn receive_response(&mut self, response: BytesMut);
 }
 
-impl ClientConnection {
+impl<C> ClientConnection<C>
+where
+    C: Encoder<Bytes, Error = io::Error>
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Clone
+    + Send
+    + Sync
+    + 'static, {
     /**
     @param receivers - every receiver must have unique handler name,
     if there is two or more receivers with the same handler name,
@@ -39,7 +54,8 @@ impl ClientConnection {
     pub async fn new(
         connection_dest: String,
         receivers: Vec<Arc<Mutex<dyn Receiver>>>,
-        mut processor: Option<TrafficProcessorHolder>,
+        mut processor: Option<TrafficProcessorHolder<C>>,
+        codec: C
     ) -> Self {
         let mut socket = TcpStream::connect(connection_dest).await.unwrap();
         socket.set_nodelay(true).unwrap();
@@ -53,7 +69,7 @@ impl ClientConnection {
                 panic!("Failed to connect to processor");
             }
         }
-        let mut socket = Framed::new(socket, LengthDelimitedCodec::new());
+        let mut socket = Framed::new(socket, codec);
         if processor.is_some() {
             if !processor
                 .as_mut()
@@ -110,16 +126,16 @@ impl ClientConnection {
         self.running.store(false, Release);
     }
 
-    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>> {
+    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<Framed<TcpStream, C>>> {
         self.running.store(false, Release);
         self.socket.clone()
     }
 
     async fn register_receivers(
         receivers: &Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
-        socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
+        socket: &Arc<Mutex<Framed<TcpStream, C>>>,
         receivers_mapped: &mut HashMap<u64, Arc<Mutex<dyn Receiver>>>,
-        processor: &mut TrafficProcessorHolder,
+        processor: &mut TrafficProcessorHolder<C>,
     ) {
         use futures_util::SinkExt;
 
@@ -151,8 +167,8 @@ impl ClientConnection {
 
     async fn process_requests(
         receivers_mapped: &HashMap<u64, Arc<Mutex<dyn Receiver>>>,
-        socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
-        processor: &mut TrafficProcessorHolder,
+        socket: &Arc<Mutex<Framed<TcpStream, C>>>,
+        processor: &mut TrafficProcessorHolder<C>,
     ) {
         use futures_util::SinkExt;
 
@@ -193,7 +209,7 @@ impl ClientConnection {
     }
 
     async fn wait_for_data(
-        socket: &Arc<Mutex<Framed<TcpStream, LengthDelimitedCodec>>>,
+        socket: &Arc<Mutex<Framed<TcpStream, C>>>,
     ) -> BytesMut {
         use futures_util::StreamExt;
 

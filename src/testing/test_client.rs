@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+
+use std::io;
 use crate::client::{ClientConnection, Receiver};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
@@ -11,7 +13,8 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
-use tokio_util::bytes::BytesMut;
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder};
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::testing::test_proc::TestProcessor;
 
@@ -92,9 +95,9 @@ impl Receiver for TestRecv {
     }
 }
 
-pub async fn init_client() -> ClientConnection {
-    let mut processor_holder = TrafficProcessorHolder::new();
-    processor_holder.register_processor(Box::new(TestProcessor::new()));
+pub async fn init_client<C>(c: C) -> ClientConnection<C> where C: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static + std::marker::Sync {
+    let mut processor_holder: TrafficProcessorHolder<C> = TrafficProcessorHolder::new();
+    processor_holder.register_processor(Box::new(TestProcessor::new(c.clone())));
 
     let connection = ClientConnection::new(
         "127.0.0.1:3333".to_string(),
@@ -103,6 +106,6 @@ pub async fn init_client() -> ClientConnection {
             response_send: Arc::new(Mutex::new(AtomicU64::new(0))),
             id: 0,
         }))],
-    Some(processor_holder)).await;
+    Some(processor_holder), c).await;
     return connection;
 }

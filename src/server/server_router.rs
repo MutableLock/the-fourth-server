@@ -3,24 +3,30 @@ use std::net::{SocketAddr};
 use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc};
+use tokio::io;
 use tokio::sync::{Mutex};
 use tokio::sync::oneshot::Sender;
-use tokio_util::bytes::{BytesMut};
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder};
 use crate::server::handler::Handler;
 use crate::structures::s_type;
 use crate::structures::s_type::{HandlerMetaAns, HandlerMetaReq, PacketMeta, ServerError, ServerErrorEn, StructureType, SystemSType, TypeContainer, TypeTupple};
 use crate::structures::s_type::ServerErrorEn::InternalError;
 
-pub struct TcpServerRouter {
-    routes: Arc<HashMap<TypeTupple, Arc<Mutex<dyn Handler>>>>,
+pub struct TcpServerRouter<C>
+where
+    C:  Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync+ 'static {
+    routes: Arc<HashMap<TypeTupple, Arc<Mutex<dyn Handler<Codec = C>>>>>,
     routes_text_names: Arc<HashMap<String, u64>>,
-    routes_to_add: Vec<(TypeTupple, (Arc<Mutex<dyn Handler>>, String))>,
+    routes_to_add: Vec<(TypeTupple, (Arc<Mutex<dyn Handler<Codec = C>>>, String))>,
     router_incremental: u64,
     routes_commited: bool,
     user_s_type: Box<dyn StructureType>,
 }
 
-impl TcpServerRouter {
+impl<C> TcpServerRouter<C>
+where
+    C: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static {
     pub fn new(user_s_type: Box<dyn StructureType>) -> Self {
         Self {
             routes: Arc::new(HashMap::new()),
@@ -34,7 +40,7 @@ impl TcpServerRouter {
 
     pub fn add_route(
         &mut self,
-        handler: Arc<Mutex<dyn Handler>>,
+        handler: Arc<Mutex<dyn Handler<Codec = C>>>,
         handler_name: String,
         mut s_types: Vec<Box<dyn StructureType>>,
     ) {
@@ -73,7 +79,7 @@ impl TcpServerRouter {
     }
 
 
-    pub fn get_routes(&self) -> Arc<HashMap<TypeTupple, Arc<Mutex<dyn Handler>>>> {
+    pub fn get_routes(&self) -> Arc<HashMap<TypeTupple, Arc<Mutex<dyn Handler<Codec = C>>>>> {
         self.routes.clone()
     }
 
@@ -81,7 +87,7 @@ impl TcpServerRouter {
         &self,
         meta: BytesMut,
         payload: BytesMut,
-        client_meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
+        client_meta: (SocketAddr,  &mut Option<Sender<Arc<Mutex<dyn Handler<Codec = C>>>>>),
     ) -> Result<Vec<u8>, ServerError> {
         // Try to deserialize normal PacketMeta
         if let Ok(meta_pack) = s_type::from_slice::<PacketMeta>(&meta) {

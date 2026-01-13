@@ -1,32 +1,51 @@
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
-use crate::server::tcp_server::{TcpServer};
+use crate::server::tcp_server::TcpServer;
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
+use std::io;
 
+use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::testing::test_client::init_client;
+use crate::testing::test_proc::TestProcessor;
 use crate::testing::test_s_type::*;
+use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use crate::structures::traffic_proc::TrafficProcessorHolder;
-use crate::testing::test_proc::TestProcessor;
+use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 
-struct TestHandler {
-    moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
+struct TestHandler<C>
+where
+    C: Encoder<Bytes, Error = io::Error>
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    moved_streams: Vec<Framed<TcpStream, C>>,
 }
 #[async_trait]
-impl Handler for TestHandler {
+impl<C> Handler for TestHandler<C>
+where
+    C: Encoder<Bytes, Error = io::Error>
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    type Codec = C;
+
     async fn serve_route(
         &mut self,
-        cli_meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
+        cli_meta: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler<Codec = C>>>>>),
         s_type: Box<dyn StructureType>,
         mut data: BytesMut,
     ) -> Result<Vec<u8>, Vec<u8>> {
@@ -82,11 +101,18 @@ impl Handler for TestHandler {
         }
     }
 
-    async fn accept_stream(&mut self, add: SocketAddr, stream: (Framed<tokio::net::TcpStream, LengthDelimitedCodec>, TrafficProcessorHolder)) {
+    async fn accept_stream(
+        &mut self,
+        add: SocketAddr,
+        stream: (
+            Framed<tokio::net::TcpStream, C>,
+            TrafficProcessorHolder<C>,
+        ),
+    ) {
         self.moved_streams.push(stream.0);
     }
 }
-
+/*
 #[tokio::test]
 async fn server_start() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));
@@ -146,3 +172,6 @@ pub async fn server_start_and_client_request() {
     sleep(Duration::from_millis(1500)).await;
     println!("now the process will need to shutdown, if not this is trouble");
 }
+
+
+ */

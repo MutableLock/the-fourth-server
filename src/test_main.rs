@@ -3,6 +3,7 @@ pub mod server;
 pub mod structures;
 pub mod util;
 
+use std::io;
 use crate::server::handler::Handler;
 use crate::server::server_router::TcpServerRouter;
 use crate::server::tcp_server::{TcpServer};
@@ -22,21 +23,37 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
-use tokio_util::bytes::{BytesMut};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::testing::test_proc::TestProcessor;
 
 mod testing;
 
-struct TestHandler {
-    moved_streams: Vec<Framed<TcpStream, LengthDelimitedCodec>>,
+struct TestHandler<C>
+where
+    C: Encoder<Bytes, Error = io::Error>
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Clone
+    + Send
+    + Sync
+    + 'static, {
+    moved_streams: Vec<Framed<TcpStream, C>>,
 }
 #[async_trait]
-impl Handler for TestHandler {
+impl<C> Handler for TestHandler<C>
+where
+    C: Encoder<Bytes, Error = io::Error>
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Clone
+    + Send
+    + Sync
+    + 'static, {
+    type Codec = C;
+
     async fn serve_route(
         &mut self,
-        _: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler>>>>),
+        _: (SocketAddr, &mut Option<Sender<Arc<Mutex<dyn Handler<Codec = C>>>>>),
         s_type: Box<dyn StructureType>,
         mut data: BytesMut,
     ) -> Result<Vec<u8>, Vec<u8>> {
@@ -97,8 +114,8 @@ impl Handler for TestHandler {
         &mut self,
         _: SocketAddr,
         stream: (
-            Framed<tokio::net::TcpStream, LengthDelimitedCodec>,
-            TrafficProcessorHolder,
+            Framed<tokio::net::TcpStream, C>,
+            TrafficProcessorHolder<C>,
         ),
     ) {
         self.moved_streams.push(stream.0);
@@ -121,9 +138,9 @@ pub async fn main() {
     router.commit_routes();
     let router = Arc::new(router);
 
-    let mut proc_holder = TrafficProcessorHolder::new();
-    proc_holder.register_processor(Box::new(TestProcessor::new()));
-    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder)).await;
+    let mut proc_holder: TrafficProcessorHolder<LengthDelimitedCodec> = TrafficProcessorHolder::new();
+    proc_holder.register_processor(Box::new(TestProcessor::new(LengthDelimitedCodec::new())));
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder), LengthDelimitedCodec::new()).await;
 
     server.start().await;
    

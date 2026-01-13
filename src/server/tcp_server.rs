@@ -5,39 +5,46 @@ use crate::structures::s_type::{PacketMeta, ServerErrorEn};
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::{
-    Arc,
-};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 
 use crate::server::handler::Handler;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
-use futures_util::{SinkExt};
+use futures_util::SinkExt;
 use tokio::io;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 
-pub type RequestChannel = (
-    Sender<Arc<Mutex<dyn Handler>>>,
-    Receiver<Arc<Mutex<dyn Handler>>>,
+pub type RequestChannel<C> where C:  Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + Sync+ 'static= (
+    Sender<Arc<Mutex<dyn Handler<Codec = C>>>>,
+    Receiver<Arc<Mutex<dyn Handler<Codec = C>>>>,
 );
 
-pub struct TcpServer {
-    router: Arc<TcpServerRouter>,
+
+pub struct TcpServer<C>
+where
+    C:  Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static,
+{
+    router: Arc<TcpServerRouter<C>>,
     socket: Arc<TcpListener>,
     shutdown_sig: Arc<Notify>,
-    processor: Option<TrafficProcessorHolder>,
+    processor: Option<TrafficProcessorHolder<C>>,
+    codec: C,
 }
 
-impl TcpServer {
+impl<C> TcpServer<C>
+where
+    C: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static,
+{
     pub async fn new(
         bind_address: String,
-        router: Arc<TcpServerRouter>,
-        processor: Option<TrafficProcessorHolder>,
+        router: Arc<TcpServerRouter<C>>,
+        processor: Option<TrafficProcessorHolder<C>>,
+        codec: C,
     ) -> Self {
         Self {
             router,
@@ -48,6 +55,7 @@ impl TcpServer {
             ),
             shutdown_sig: Arc::new(Notify::new()),
             processor,
+            codec,
         }
     }
 
@@ -64,6 +72,7 @@ impl TcpServer {
         } else {
             TrafficProcessorHolder::new()
         };
+        let codec = self.codec.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -71,7 +80,7 @@ impl TcpServer {
                                     let mut stream = res.unwrap();
                         stream.0.set_nodelay(true).unwrap();
                                     if processor.initial_connect(&mut stream.0).await {
-                            let mut framed = Framed::new(stream.0, LengthDelimitedCodec::new());
+                            let mut framed = Framed::new(stream.0, codec.clone());
                             if processor.initial_framed_connect(&mut framed).await {
                                 let router = router.clone();
                                     let prc_clone = processor.clone();
@@ -79,7 +88,7 @@ impl TcpServer {
                                         Self::handle_connection(stream.1, framed, router.as_ref(), prc_clone).await;
                                     });
                             }
-                                    
+
                         } else {
                             let _ = stream.0.shutdown().await;
                         }
@@ -98,16 +107,16 @@ impl TcpServer {
 
     async fn handle_connection(
         addr: SocketAddr,
-        mut stream: Framed<TcpStream, LengthDelimitedCodec>,
-        router: &TcpServerRouter,
-        mut processor: TrafficProcessorHolder,
+        mut stream: Framed<TcpStream, C>,
+        router: &TcpServerRouter<C>,
+        mut processor: TrafficProcessorHolder<C>,
     ) {
         use futures_util::SinkExt;
-        let move_sig = tokio::sync::oneshot::channel::<Arc<Mutex<dyn Handler>>>();
+        let move_sig = tokio::sync::oneshot::channel::<Arc<Mutex<dyn Handler<Codec = C>>>>();
         let mut move_sig = (Some(move_sig.0), move_sig.1);
         loop {
             let meta_data: Result<Option<BytesMut>, bool> =
-                receive_message(addr.clone(), &mut stream, &mut processor).await;
+                Self::receive_message(addr.clone(), &mut stream, &mut processor).await;
             if meta_data.is_err() {
                 if meta_data.unwrap_err() {
                     stream.close().await.unwrap();
@@ -128,7 +137,8 @@ impl TcpServer {
 
             let mut payload: BytesMut = BytesMut::new();
             if has_payload {
-                let payload_res = receive_message(addr.clone(), &mut stream, &mut processor).await;
+                let payload_res =
+                    Self::receive_message(addr.clone(), &mut stream, &mut processor).await;
                 if payload_res.is_err() {
                     if payload_res.unwrap_err() {
                         stream.close().await.unwrap();
@@ -148,13 +158,14 @@ impl TcpServer {
                 .await;
 
             let message = res.unwrap_or_else(|err| s_type::to_vec(&err).unwrap());
-            let res = send_message(&mut stream, message, &mut processor).await;
+            let res = Self::send_message(&mut stream, message, &mut processor).await;
 
             if let Ok(requester) = move_sig.1.try_recv() {
                 requester
                     .lock()
                     .await
-                    .accept_stream(addr, (stream, processor.clone())).await;
+                    .accept_stream(addr, (stream, processor.clone()))
+                    .await;
                 return;
             }
 
@@ -167,57 +178,56 @@ impl TcpServer {
             }
         }
     }
-}
+    async fn send_message(
+        stream: &mut Framed<TcpStream, C>,
+        message: Vec<u8>,
+        processor: &mut TrafficProcessorHolder<C>,
+    ) -> Result<(), io::Error> {
+        let message = Bytes::from(processor.post_process_traffic(message).await);
+       stream.send(message).await
+    }
 
-async fn send_message(
-    stream: &mut Framed<TcpStream, LengthDelimitedCodec>,
-    message: Vec<u8>,
-    processor: &mut TrafficProcessorHolder,
-) -> Result<(), io::Error> {
-    let message = Bytes::from(processor.post_process_traffic(message).await);
-    stream.send(message).await
-}
+    async fn receive_message(
+        _: SocketAddr,
+        stream: &mut Framed<TcpStream, C>,
+        processor: &mut TrafficProcessorHolder<C>,
+    ) -> Result<Option<BytesMut>, bool> {
+        use futures_util::StreamExt;
+        match stream.next().await {
+            Some(data) => match data {
+                Ok(mut data) => {
+                    data = processor.pre_process_traffic(data).await;
+                    return Ok(Some(data));
+                }
+                Err(e) => {
+                    // This is where codec-level decoding errors happen
+                    match e.kind() {
+                        // IO errors usually mean the connection is broken
+                        std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::UnexpectedEof => {
+                            println!("Client disconnected");
+                            return Err(true);
+                        }
 
-async fn receive_message(
-    _: SocketAddr,
-    stream: &mut Framed<TcpStream, LengthDelimitedCodec>,
-    processor: &mut TrafficProcessorHolder,
-) -> Result<Option<BytesMut>, bool> {
-    use futures_util::StreamExt;
-    match stream.next().await {
-        Some(data) => match data {
-            Ok(mut data) => {
-                data = processor.pre_process_traffic(data).await;
-                return Ok(Some(data));
-            }
-            Err(e) => {
-                // This is where codec-level decoding errors happen
-                match e.kind() {
-                    // IO errors usually mean the connection is broken
-                    std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::ConnectionAborted
-                    | std::io::ErrorKind::BrokenPipe
-                    | std::io::ErrorKind::UnexpectedEof => {
-                        println!("Client disconnected");
-                        return Err(true);
-                    }
+                        // Frame too large (if you set max_frame_length)
+                        std::io::ErrorKind::InvalidData => {
+                            eprintln!("Frame exceeded maximum size: {e}");
+                            return Err(false);
+                        }
 
-                    // Frame too large (if you set max_frame_length)
-                    std::io::ErrorKind::InvalidData => {
-                        eprintln!("Frame exceeded maximum size: {e}");
-                        return Err(false);
-                    }
-
-                    // Other IO errors
-                    _ => {
-                        eprintln!("IO error while reading frame: {e}");
-                        return Err(false);
+                        // Other IO errors
+                        _ => {
+                            eprintln!("IO error while reading frame: {e}");
+                            return Err(false);
+                        }
                     }
                 }
+            },
+            None => {
+                return Err(true);
             }
-        },
-        None => {
-            return Ok(None);
         }
     }
 }
