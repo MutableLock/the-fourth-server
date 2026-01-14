@@ -103,7 +103,6 @@ where
                             res = listener.accept() => {
                             if res.is_ok() {
                                 let mut stream = res.unwrap();
-
                                 stream.0.set_nodelay(true).unwrap();
                                 let transport = Self::initial_accept(stream.0, config.clone()).await;
                                 if let Some(mut transport) = transport {

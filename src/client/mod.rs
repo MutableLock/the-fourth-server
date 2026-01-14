@@ -1,237 +1,117 @@
-//Pretty shitty implementations of client at this time, if u have ideas feel free to contact me
-use crate::structures::s_type;
-use crate::structures::s_type::{
-    HandlerMetaAns, HandlerMetaReq, PacketMeta, StructureType, SystemSType,
-};
+use crate::structures::s_type::StructureType;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
-use std::collections::HashMap;
+use crate::structures::transport::Transport;
+use async_trait::async_trait;
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::{Relaxed, Release};
-use std::time::Duration;
-use async_trait::async_trait;
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tokio_rustls::rustls::{ClientConfig, ClientConnection, StreamOwned};
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::{Mutex, mpsc};
 use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::ClientConfig;
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
-use crate::structures::transport::Transport;
+use tokio_util::codec::{Decoder, Encoder};
 
-pub struct ClientConnect<C>
-where
-    C: Encoder<Bytes, Error = io::Error>
-    + Decoder<Item = BytesMut, Error = io::Error>
-    + Clone
-    + Send
-    + Sync
-    + 'static, {
-    socket: Arc<Mutex<Framed<Transport, C>>>,
-    receivers: Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
-    running: Arc<AtomicBool>,
-    current_thread: Option<JoinHandle<()>>,
-    processor: Option<TrafficProcessorHolder<C>>,
-
-}
+pub struct ClientConnect {}
 #[async_trait]
-pub trait Receiver: Send + Sync {
-    async fn get_handler_name(&self) -> String;
-    async fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)>;
-    async fn receive_response(&mut self, response: BytesMut);
+pub trait DataConsumer {
+    async fn response_received(
+        &mut self,
+        request: DataRequest,
+        handler_id: u64,
+        response: BytesMut,
+    );
 }
 
-impl<C> ClientConnect<C>
-where
-    C: Encoder<Bytes, Error = io::Error>
-    + Decoder<Item = BytesMut, Error = io::Error>
-    + Clone
-    + Send
-    + Sync
-    + 'static, {
-    /**
-    @param receivers - every receiver must have unique handler name,
-    if there is two or more receivers with the same handler name,
-    the requested packets will be routed only at one receiver!!!
-    */
-    pub async fn new(
+pub struct HandlerInfo {
+    id: Option<u64>,
+    named: Option<String>,
+}
+
+impl HandlerInfo {
+    pub fn new_named(name: String) -> Self {
+        Self {
+            id: None,
+            named: Some(name),
+        }
+    }
+
+    pub fn new_id(id: u64) -> Self {
+        Self {
+            id: Some(id),
+            named: None,
+        }
+    }
+
+    pub fn id(&self) -> Option<u64> {
+        self.id
+    }
+
+    pub fn named(&self) -> &Option<String> {
+        &self.named
+    }
+}
+
+pub struct DataRequest {
+    pub handler_info: HandlerInfo,
+    pub data: Vec<u8>,
+    pub s_type: Box<dyn StructureType>,
+}
+
+struct ClientRequest {
+    req: DataRequest,
+    consumer: Arc<Mutex<dyn DataConsumer>>,
+}
+
+impl ClientConnect {
+    pub async fn new<
+        C: Encoder<Bytes, Error = io::Error>
+            + Decoder<Item = BytesMut, Error = io::Error>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+    >(
         server_name: String,
         connection_dest: String,
-        receivers: Vec<Arc<Mutex<dyn Receiver>>>,
         mut processor: Option<TrafficProcessorHolder<C>>,
         codec: C,
-        client_config: Option<ClientConfig>
+        client_config: Option<ClientConfig>,
+        max_request_in_time: usize,
     ) -> Self {
         let mut socket = TcpStream::connect(connection_dest).await.unwrap();
         socket.set_nodelay(true).unwrap();
         let mut socket = if let Some(client_config) = client_config {
             let connector = TlsConnector::from(Arc::new(client_config));
-            let res = connector.connect(server_name.try_into().unwrap(), socket).await.unwrap();
+            let res = connector
+                .connect(server_name.try_into().unwrap(), socket)
+                .await
+                .unwrap();
             Transport::tls_client(res)
         } else {
             Transport::plain(socket)
         };
-
-
-        if processor.is_some() {
-            if !processor
-                .as_mut()
-                .unwrap()
-                .initial_connect(&mut socket)
-                .await
-            {
-                panic!("Failed to connect to processor");
-            }
-        }
-        let mut socket = Framed::new(socket, codec);
-        if processor.is_some() {
-            if !processor
-                .as_mut()
-                .unwrap()
-                .initial_framed_connect(&mut socket)
-                .await
-            {
-                panic!("Failed to connect to processor");
-            }
-        }
-        Self {
-            socket: Arc::new(Mutex::new(socket)),
-            receivers: Arc::new(receivers),
-            running: Arc::new(AtomicBool::new(true)),
-            current_thread: None,
-            processor,
-        }
+        let (tx, rx) = mpsc::channel::<ClientRequest>(max_request_in_time);
     }
 
-    pub async fn start(&mut self) {
-        let receivers = self.receivers.clone();
-        let socket = self.socket.clone();
-        let running = self.running.clone();
-        let mut processor = if let Some(processor) = self.processor.take() {
-            processor
-        } else {
-            TrafficProcessorHolder::new()
-        };
-        self.current_thread = Some(tokio::spawn(async move {
-            let mut receivers_mapped: HashMap<u64, Arc<Mutex<dyn Receiver>>> = HashMap::new();
-
-            loop {
-                if !running.load(Relaxed) {
-                    break;
-                }
-                if receivers_mapped.is_empty() {
-                    Self::register_receivers(
-                        &receivers,
-                        &socket,
-                        &mut receivers_mapped,
-                        &mut processor,
-                    )
-                    .await;
-                } else {
-                    tokio::time::sleep(Duration::from_millis(1500)).await;
-                }
-
-                Self::process_requests(&receivers_mapped, &socket, &mut processor).await;
-            }
-        }));
-    }
-
-    pub fn stop(&mut self) {
-        self.running.store(false, Release);
-    }
-
-    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<Framed<Transport, C>>> {
-        self.running.store(false, Release);
-        self.socket.clone()
-    }
-
-    async fn register_receivers(
-        receivers: &Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
-        socket: &Arc<Mutex<Framed<Transport, C>>>,
-        receivers_mapped: &mut HashMap<u64, Arc<Mutex<dyn Receiver>>>,
-        processor: &mut TrafficProcessorHolder<C>,
+    async fn connection_main<
+        C: Encoder<Bytes, Error = io::Error>
+            + Decoder<Item = BytesMut, Error = io::Error>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+    >(
+        socket: Transport,
+        processor: Option<TrafficProcessorHolder<C>>,
+        mut rx: Receiver<ClientRequest>,
+        shutdown_sig: tokio::sync::oneshot::Sender<()>,
     ) {
-        use futures_util::SinkExt;
-
-        for receiver in receivers.iter() {
-            let meta_req = HandlerMetaReq {
-                s_type: SystemSType::HandlerMetaReq,
-                handler_name: receiver.lock().await.get_handler_name().await,
-            };
-
-            let data = s_type::to_vec(&meta_req).unwrap();
-            let data = processor.post_process_traffic(data).await;
-
-            socket
-                .lock()
-                .await
-                .send(Bytes::from(data))
-                .await
-                .expect("Failed to send");
-
-            let mut data = processor
-                .pre_process_traffic(Self::wait_for_data(socket).await)
-                .await;
-
-            let meta_ans = s_type::from_slice::<HandlerMetaAns>(data.as_mut()).unwrap();
-
-            receivers_mapped.insert(meta_ans.id, receiver.clone());
-        }
-    }
-
-    async fn process_requests(
-        receivers_mapped: &HashMap<u64, Arc<Mutex<dyn Receiver>>>,
-        socket: &Arc<Mutex<Framed<Transport, C>>>,
-        processor: &mut TrafficProcessorHolder<C>,
-    ) {
-        use futures_util::SinkExt;
-
-        for (handler_id, receiver) in receivers_mapped.iter() {
-            let mut receiver_lock = receiver.lock().await;
-            if let Some((payload, structure)) = receiver_lock.get_request().await {
-                let meta = PacketMeta {
-                    s_type: SystemSType::PacketMeta,
-                    s_type_req: structure.get_serialize_function()(structure.clone_unique()),
-                    handler_id: *handler_id,
-                    has_payload: !payload.is_empty(),
-                };
-
-                let meta_bytes = processor
-                    .post_process_traffic(s_type::to_vec(&meta).unwrap())
-                    .await;
-                let payload = processor.post_process_traffic(payload).await;
-                socket
-                    .lock()
-                    .await
-                    .send(Bytes::from(meta_bytes))
-                    .await
-                    .unwrap();
-                println!("{}", payload.len());
-                socket
-                    .lock()
-                    .await
-                    .send(Bytes::from(payload))
-                    .await
-                    .unwrap();
-                let response = processor
-                    .pre_process_traffic(Self::wait_for_data(socket).await)
-                    .await;
-
-                receiver_lock.receive_response(response).await;
+        let processor = processor.unwrap_or(TrafficProcessorHolder::new());
+        tokio::spawn(async move {
+            loop{
+                while let Some(request) = rx.recv().await {}
             }
-        }
-    }
-
-    async fn wait_for_data(
-        socket: &Arc<Mutex<Framed<Transport, C>>>,
-    ) -> BytesMut {
-        use futures_util::StreamExt;
-
-        let mut res = socket.lock().await.next().await;
-        while res.is_none() {
-            res = socket.lock().await.next().await;
-        }
-        res.unwrap().unwrap()
+        });
     }
 }
