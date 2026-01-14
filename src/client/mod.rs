@@ -33,7 +33,7 @@ where
     running: Arc<AtomicBool>,
     current_thread: Option<JoinHandle<()>>,
     processor: Option<TrafficProcessorHolder<C>>,
-    
+
 }
 #[async_trait]
 pub trait Receiver: Send + Sync {
@@ -68,9 +68,9 @@ where
         let mut socket = if let Some(client_config) = client_config {
             let connector = TlsConnector::from(Arc::new(client_config));
             let res = connector.connect(server_name.try_into().unwrap(), socket).await.unwrap();
-            Transport::TlsClient(res)
+            Transport::tls_client(res)
         } else {
-            Transport::Plain(socket)
+            Transport::plain(socket)
         };
 
 

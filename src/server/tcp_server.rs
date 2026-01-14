@@ -139,7 +139,7 @@ where
 
     async fn initial_accept(stream: TcpStream, config: Option<ServerConfig>) -> Option<Transport> {
         if config.is_none() {
-            return Some(Transport::Plain(stream));
+            return Some(Transport::plain(stream));
         } else {
             let cfg = config.unwrap();
             let acceptor = TlsAcceptor::from(Arc::new(cfg));
@@ -147,7 +147,7 @@ where
             if res.is_err() {
                 return None;
             }
-            return Some(Transport::Tls(res.unwrap()));
+            return Some(Transport::tls_server(res.unwrap()));
         }
     }
 
