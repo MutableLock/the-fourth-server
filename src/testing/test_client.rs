@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::io;
-use crate::client::{ClientConnection, Receiver};
+use crate::client::{ClientConnect, Receiver};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 use crate::testing::test_s_type::{
@@ -95,17 +95,18 @@ impl Receiver for TestRecv {
     }
 }
 
-pub async fn init_client<C>(c: C) -> ClientConnection<C> where C: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static + std::marker::Sync {
+pub async fn init_client<C>(c: C) -> ClientConnect<C> where C: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static + std::marker::Sync {
     let mut processor_holder: TrafficProcessorHolder<C> = TrafficProcessorHolder::new();
     processor_holder.register_processor(Box::new(TestProcessor::new(c.clone())));
 
-    let connection = ClientConnection::new(
+    let connection = ClientConnect::new(
+        "127.0.0.1".to_string(),
         "127.0.0.1:3333".to_string(),
         vec![Arc::new(tokio::sync::Mutex::new(TestRecv {
             counter: Arc::new(Mutex::new(AtomicU64::new(0))),
             response_send: Arc::new(Mutex::new(AtomicU64::new(0))),
             id: 0,
         }))],
-    Some(processor_holder), c).await;
+    Some(processor_holder), c, None).await;
     return connection;
 }

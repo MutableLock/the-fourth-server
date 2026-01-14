@@ -27,6 +27,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = {version = "0.7", features = ["codec"]}
 futures-util = { version = "0.3", features = ["sink"] }
 async-trait = { version = "0.1" }
+tokio-rustls = "0.26.4"
 
 [profile.release]
 opt-level = 3

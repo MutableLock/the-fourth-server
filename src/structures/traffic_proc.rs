@@ -3,11 +3,13 @@ use tokio::io;
 use tokio::net::TcpStream;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use crate::structures::transport::Transport;
+
 #[async_trait]
 pub trait TrafficProcess: Send + Sync {
     type Codec;
-    async fn initial_connect(&mut self, source: &mut TcpStream) -> bool;
-    async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, Self::Codec>) -> bool;
+    async fn initial_connect(&mut self, source: &mut Transport) -> bool;
+    async fn initial_framed_connect(&mut self, source: &mut Framed<Transport, Self::Codec>) -> bool;
     async fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
     async fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
 
@@ -39,7 +41,7 @@ C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send +
         self.processors.push(processor);
     }
 
-    pub async fn initial_connect(&mut self, source: &mut TcpStream) -> bool{
+    pub async fn initial_connect(&mut self, source: &mut Transport) -> bool{
         for processor in self.processors.iter_mut() {
             if !processor.as_mut().initial_connect(source).await{
                 return false;
@@ -48,7 +50,7 @@ C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send +
         true
     }
 
-    pub async fn initial_framed_connect(&mut self, source: &mut Framed<TcpStream, C>) -> bool {
+    pub async fn initial_framed_connect(&mut self, source: &mut Framed<Transport, C>) -> bool {
         for processor in self.processors.iter_mut() {
             if !processor.as_mut().initial_framed_connect(source).await{
                 return false;

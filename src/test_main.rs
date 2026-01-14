@@ -19,13 +19,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use async_trait::async_trait;
-use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 use crate::structures::traffic_proc::TrafficProcessorHolder;
+use crate::structures::transport::Transport;
 use crate::testing::test_proc::TestProcessor;
 
 mod testing;
@@ -38,7 +38,7 @@ where
     + Send
     + Sync
     + 'static, {
-    moved_streams: Vec<Framed<TcpStream, C>>,
+    moved_streams: Vec<Framed<Transport, C>>,
 }
 #[async_trait]
 impl<C> Handler for TestHandler<C>
@@ -114,7 +114,7 @@ where
         &mut self,
         _: SocketAddr,
         stream: (
-            Framed<tokio::net::TcpStream, C>,
+            Framed<Transport, C>,
             TrafficProcessorHolder<C>,
         ),
     ) {
@@ -140,7 +140,7 @@ pub async fn main() {
 
     let mut proc_holder: TrafficProcessorHolder<LengthDelimitedCodec> = TrafficProcessorHolder::new();
     proc_holder.register_processor(Box::new(TestProcessor::new(LengthDelimitedCodec::new())));
-    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder), LengthDelimitedCodec::new()).await;
+    let mut server = TcpServer::new("127.0.0.1:3333".to_string(), router, Some(proc_holder), LengthDelimitedCodec::new(), None).await;
 
     server.start().await;
    

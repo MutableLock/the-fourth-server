@@ -14,10 +14,13 @@ use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_rustls::rustls::{ClientConfig, ClientConnection, StreamOwned};
+use tokio_rustls::TlsConnector;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use crate::structures::transport::Transport;
 
-pub struct ClientConnection<C>
+pub struct ClientConnect<C>
 where
     C: Encoder<Bytes, Error = io::Error>
     + Decoder<Item = BytesMut, Error = io::Error>
@@ -25,11 +28,12 @@ where
     + Send
     + Sync
     + 'static, {
-    socket: Arc<Mutex<Framed<TcpStream, C>>>,
+    socket: Arc<Mutex<Framed<Transport, C>>>,
     receivers: Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
     running: Arc<AtomicBool>,
     current_thread: Option<JoinHandle<()>>,
     processor: Option<TrafficProcessorHolder<C>>,
+    
 }
 #[async_trait]
 pub trait Receiver: Send + Sync {
@@ -38,7 +42,7 @@ pub trait Receiver: Send + Sync {
     async fn receive_response(&mut self, response: BytesMut);
 }
 
-impl<C> ClientConnection<C>
+impl<C> ClientConnect<C>
 where
     C: Encoder<Bytes, Error = io::Error>
     + Decoder<Item = BytesMut, Error = io::Error>
@@ -52,13 +56,24 @@ where
     the requested packets will be routed only at one receiver!!!
     */
     pub async fn new(
+        server_name: String,
         connection_dest: String,
         receivers: Vec<Arc<Mutex<dyn Receiver>>>,
         mut processor: Option<TrafficProcessorHolder<C>>,
-        codec: C
+        codec: C,
+        client_config: Option<ClientConfig>
     ) -> Self {
         let mut socket = TcpStream::connect(connection_dest).await.unwrap();
         socket.set_nodelay(true).unwrap();
+        let mut socket = if let Some(client_config) = client_config {
+            let connector = TlsConnector::from(Arc::new(client_config));
+            let res = connector.connect(server_name.try_into().unwrap(), socket).await.unwrap();
+            Transport::TlsClient(res)
+        } else {
+            Transport::Plain(socket)
+        };
+
+
         if processor.is_some() {
             if !processor
                 .as_mut()
@@ -126,14 +141,14 @@ where
         self.running.store(false, Release);
     }
 
-    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<Framed<TcpStream, C>>> {
+    pub fn stop_and_move_stream(&mut self) -> Arc<Mutex<Framed<Transport, C>>> {
         self.running.store(false, Release);
         self.socket.clone()
     }
 
     async fn register_receivers(
         receivers: &Arc<Vec<Arc<Mutex<dyn Receiver>>>>,
-        socket: &Arc<Mutex<Framed<TcpStream, C>>>,
+        socket: &Arc<Mutex<Framed<Transport, C>>>,
         receivers_mapped: &mut HashMap<u64, Arc<Mutex<dyn Receiver>>>,
         processor: &mut TrafficProcessorHolder<C>,
     ) {
@@ -167,7 +182,7 @@ where
 
     async fn process_requests(
         receivers_mapped: &HashMap<u64, Arc<Mutex<dyn Receiver>>>,
-        socket: &Arc<Mutex<Framed<TcpStream, C>>>,
+        socket: &Arc<Mutex<Framed<Transport, C>>>,
         processor: &mut TrafficProcessorHolder<C>,
     ) {
         use futures_util::SinkExt;
@@ -209,7 +224,7 @@ where
     }
 
     async fn wait_for_data(
-        socket: &Arc<Mutex<Framed<TcpStream, C>>>,
+        socket: &Arc<Mutex<Framed<Transport, C>>>,
     ) -> BytesMut {
         use futures_util::StreamExt;
 

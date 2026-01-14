@@ -2,10 +2,10 @@
 
 use std::io;
 use async_trait::async_trait;
-use tokio::net::TcpStream;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 use crate::structures::traffic_proc::TrafficProcess;
+use crate::structures::transport::Transport;
 
 pub struct TestProcessor<C> where C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send +Sync + 'static{
     c: C
@@ -20,11 +20,11 @@ impl<C> TestProcessor<C> where C: Encoder<Bytes> + Decoder<Item = BytesMut, Erro
 impl<C> TrafficProcess for TestProcessor<C> where C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + Sync + 'static{
     type Codec = C;
 
-    async fn initial_connect(&mut self, _: &mut TcpStream) -> bool {
+    async fn initial_connect(&mut self, _: &mut Transport) -> bool {
         return true;
     }
 
-    async fn initial_framed_connect(&mut self, _: &mut Framed<TcpStream, C>) -> bool {
+    async fn initial_framed_connect(&mut self, _: &mut Framed<Transport, C>) -> bool {
         return true;
     }
 

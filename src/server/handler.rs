@@ -9,6 +9,8 @@ use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
 use crate::structures::s_type::StructureType;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
+use crate::structures::transport::Transport;
+
 #[async_trait]
 pub trait Handler: Send + Sync {
     type Codec: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static;
@@ -24,6 +26,6 @@ pub trait Handler: Send + Sync {
         data: BytesMut,
     ) -> Result<Vec<u8>, Vec<u8>>;
     
-    async fn accept_stream(&mut self, add: SocketAddr, stream: (Framed<TcpStream, Self::Codec>, TrafficProcessorHolder<Self::Codec>));
+    async fn accept_stream(&mut self, add: SocketAddr, stream: (Framed<Transport, Self::Codec>, TrafficProcessorHolder<Self::Codec>));
 
 }

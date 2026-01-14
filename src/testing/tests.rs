@@ -13,12 +13,12 @@ use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use crate::structures::transport::Transport;
 
 struct TestHandler<C>
 where
@@ -29,7 +29,7 @@ where
         + Sync
         + 'static,
 {
-    moved_streams: Vec<Framed<TcpStream, C>>,
+    moved_streams: Vec<Framed<Transport, C>>,
 }
 #[async_trait]
 impl<C> Handler for TestHandler<C>
@@ -105,7 +105,7 @@ where
         &mut self,
         add: SocketAddr,
         stream: (
-            Framed<tokio::net::TcpStream, C>,
+            Framed<Transport, C>,
             TrafficProcessorHolder<C>,
         ),
     ) {
