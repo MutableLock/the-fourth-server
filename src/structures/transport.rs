@@ -8,12 +8,12 @@ use futures_util::Stream;
 
 /// Unified transport using dynamic dispatch
 pub struct Transport {
-    inner: Box<dyn AsyncReadWrite + Send + Sync + Unpin + 'static>,
+    inner: Box<dyn AsyncReadWrite >,
 }
 
 /// Trait object to unify AsyncRead + AsyncWrite
-pub trait AsyncReadWrite: AsyncRead + AsyncWrite {}
-impl<T: AsyncRead + AsyncWrite + ?Sized> AsyncReadWrite for T {}
+pub trait AsyncReadWrite: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
+impl<T: AsyncRead + AsyncWrite + ?Sized + Send + Sync + Unpin + 'static> AsyncReadWrite for T {}
 
 impl Transport {
     /// Wrap a plain TcpStream
@@ -38,7 +38,7 @@ impl Transport {
     }
 
     /// Optionally expose inner (if needed)
-    pub fn inner(&mut self) -> &mut (dyn AsyncReadWrite + Send + Sync + Unpin + 'static) {
+    pub fn inner(&mut self) -> &mut (dyn AsyncReadWrite) {
         &mut *self.inner
     }
 }
