@@ -16,7 +16,7 @@ use crate::testing::test_client::init_client;
 pub async fn main() {
     let mut client = init_client(LengthDelimitedCodec::new()).await;
     loop{
-        sleep(Duration::from_secs(1)).await;
+      //  sleep(Duration::from_secs(1)).await;
         let req = client.1.lock().await.get_request().await;
         if let Some(req) = req{
             let cli_request = ClientRequest{req: DataRequest{
