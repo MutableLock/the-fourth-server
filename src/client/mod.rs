@@ -17,6 +17,22 @@ use tokio_rustls::rustls::ClientConfig;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
+#[derive(Debug)]
+pub enum ClientError {
+    Io(io::Error),
+    Tls(String),
+    Codec(io::Error),
+    Router(String),
+    ChannelClosed,
+    Protocol(String),
+}
+
+impl From<io::Error> for ClientError {
+    fn from(e: io::Error) -> Self {
+        ClientError::Io(e)
+    }
+}
+
 pub struct ClientConnect {
     tx: Sender<ClientRequest>,
 }
@@ -68,127 +84,163 @@ pub struct ClientRequest {
 impl ClientConnect {
     pub async fn new<
         C: Encoder<Bytes, Error = io::Error>
-            + Decoder<Item = BytesMut, Error = io::Error>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     >(
         server_name: String,
         connection_dest: String,
-        mut processor: Option<TrafficProcessorHolder<C>>,
+        processor: Option<TrafficProcessorHolder<C>>,
         codec: C,
         client_config: Option<ClientConfig>,
         max_request_in_time: usize,
-    ) -> Self {
-        let mut socket = TcpStream::connect(connection_dest).await.unwrap();
-        socket.set_nodelay(true).unwrap();
-        let mut socket = Framed::new(
-            if let Some(client_config) = client_config {
-                let connector = TlsConnector::from(Arc::new(client_config));
-                let res = connector
-                    .connect(server_name.try_into().unwrap(), socket)
-                    .await
-                    .unwrap();
-                Transport::tls_client(res)
-            } else {
-                Transport::plain(socket)
-            },
-            codec,
-        );
-        let (tx, rx) = mpsc::channel::<ClientRequest>(max_request_in_time);
-        Self::connection_main(socket, processor, rx).await;
-        Self { tx }
+    ) -> Result<Self, ClientError> {
+        let socket = TcpStream::connect(connection_dest).await?;
+        socket.set_nodelay(true)?;
+
+        let transport = if let Some(client_config) = client_config {
+            let connector = TlsConnector::from(Arc::new(client_config));
+            let domain = server_name
+                .try_into()
+                .map_err(|_| ClientError::Tls("Invalid server name".into()))?;
+
+            let tls = connector
+                .connect(domain, socket)
+                .await
+                .map_err(|e| ClientError::Tls(e.to_string()))?;
+
+            Transport::tls_client(tls)
+        } else {
+            Transport::plain(socket)
+        };
+
+        let framed = Framed::new(transport, codec);
+        let (tx, rx) = mpsc::channel(max_request_in_time);
+
+        Self::connection_main(framed, processor, rx);
+
+        Ok(Self { tx })
     }
 
-    pub async fn dispatch_request(&self, request: ClientRequest) {
-        self.tx.send(request).await.unwrap();
+    pub async fn dispatch_request(&self, request: ClientRequest) -> Result<(), ClientError> {
+        self.tx
+            .send(request)
+            .await
+            .map_err(|_| ClientError::ChannelClosed)
     }
 
-    async fn connection_main<
+    fn connection_main<
         C: Encoder<Bytes, Error = io::Error>
-            + Decoder<Item = BytesMut, Error = io::Error>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     >(
         mut socket: Framed<Transport, C>,
         processor: Option<TrafficProcessorHolder<C>>,
         mut rx: Receiver<ClientRequest>,
     ) {
-        let mut processor = processor.unwrap_or(TrafficProcessorHolder::new());
+        let mut processor = processor.unwrap_or_else(TrafficProcessorHolder::new);
         let mut router = TargetRouter::new();
+
         tokio::spawn(async move {
-            loop {
-                while let Some(request) = rx.recv().await {
-                    Self::process_request(request, &mut socket, &mut processor, &mut router).await;
+            while let Some(request) = rx.recv().await {
+                if let Err(err) = Self::process_request(
+                    request,
+                    &mut socket,
+                    &mut processor,
+                    &mut router,
+                )
+                    .await
+                {
+                    eprintln!("Client request failed: {:?}", err);
                 }
             }
         });
     }
 
+
     async fn process_request<
         C: Encoder<Bytes, Error = io::Error>
-            + Decoder<Item = BytesMut, Error = io::Error>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     >(
         request: ClientRequest,
         socket: &mut Framed<Transport, C>,
         processor: &mut TrafficProcessorHolder<C>,
         target_router: &mut TargetRouter,
-    ) {
-        let handler_id = if let Some(id) = request.req.handler_info.id() {
-            id
-        } else {
-            let named = request.req.handler_info.named.unwrap();
-            target_router
-                .request_route(named.as_str(), socket, processor)
-                .await
-                .unwrap()
+    ) -> Result<(), ClientError> {
+        let handler_id = match request.req.handler_info.id() {
+            Some(id) => id,
+            None => {
+                let name = request
+                    .req
+                    .handler_info
+                    .named
+                    .ok_or_else(|| ClientError::Protocol("Missing handler name".into()))?;
+
+                target_router
+                    .request_route(name.as_str(), socket, processor)
+                    .await
+                    .map_err(|e| ClientError::Router(format!("{:?}", e)))?
+            }
         };
+
         let meta = PacketMeta {
             s_type: SystemSType::PacketMeta,
             s_type_req: request.req.s_type.get_serialize_function()(request.req.s_type),
             handler_id,
             has_payload: !request.req.data.is_empty(),
         };
-        let meta_bytes = processor
-            .post_process_traffic(s_type::to_vec(&meta).unwrap())
+
+        let meta_vec = s_type::to_vec(&meta)
+            .ok_or_else(|| ClientError::Protocol("PacketMeta serialization failed".into()))?;
+
+        let meta_bytes = processor.post_process_traffic(meta_vec).await;
+        let payload = processor
+            .post_process_traffic(request.req.data)
             .await;
-        let payload = processor.post_process_traffic(request.req.data).await;
-        socket.send(Bytes::from(meta_bytes)).await.unwrap();
-        socket.send(Bytes::from(payload)).await.unwrap();
-        let response = processor
-            .pre_process_traffic(wait_for_data(socket).await)
-            .await;
+
+        socket.send(Bytes::from(meta_bytes)).await?;
+        socket.send(Bytes::from(payload)).await?;
+
+        let response = wait_for_data(socket).await?;
+        let response = processor.pre_process_traffic(response).await;
+
         request
             .consumer
             .lock()
             .await
             .response_received(handler_id, response)
             .await;
+
+        Ok(())
     }
+
+
 }
 
 pub async fn wait_for_data<
     C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Clone
+    + Send
+    + Sync
+    + 'static,
 >(
     socket: &mut Framed<Transport, C>,
-) -> BytesMut {
+) -> Result<BytesMut, ClientError> {
     use futures_util::StreamExt;
 
-    let mut res = socket.next().await;
-    while res.is_none() {
-        res = socket.next().await;
+    match socket.next().await {
+        Some(Ok(data)) => Ok(data),
+        Some(Err(e)) => Err(ClientError::Codec(e)),
+        None => Err(ClientError::Protocol("Connection closed".into())),
     }
-    res.unwrap().unwrap()
 }

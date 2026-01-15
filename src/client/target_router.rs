@@ -9,6 +9,21 @@ use std::io;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
+#[derive(Debug)]
+pub enum RouterError {
+    Io(io::Error),
+    Protocol(String),
+    Codec(String),
+    ConnectionClosed,
+}
+
+impl From<io::Error> for RouterError {
+    fn from(e: io::Error) -> Self {
+        RouterError::Io(e)
+    }
+}
+
+
 pub struct TargetRouter {
     known_routes: HashMap<String, u64>,
 }
@@ -26,48 +41,59 @@ impl TargetRouter {
 
     pub async fn request_route<
         C: Encoder<Bytes, Error = io::Error>
-            + Decoder<Item = BytesMut, Error = io::Error>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     >(
         &mut self,
         route: &str,
         stream: &mut Framed<Transport, C>,
         processor: &mut TrafficProcessorHolder<C>,
-    ) -> Option<u64> {
-        let pre_res = self.lookup_route(route);
-        if pre_res.is_some() {
-            return pre_res;
+    ) -> Result<u64, RouterError> {
+        if let Some(id) = self.lookup_route(route) {
+            return Ok(id);
         }
-        let id = Self::request_route_from_server(route, stream, processor).await;
+
+        let id = Self::request_route_from_server(route, stream, processor).await?;
         self.known_routes.insert(route.to_string(), id);
-        Some(id)
+        Ok(id)
     }
+
     async fn request_route_from_server<
         C: Encoder<Bytes, Error = io::Error>
-            + Decoder<Item = BytesMut, Error = io::Error>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     >(
         name: &str,
         stream: &mut Framed<Transport, C>,
         processor: &mut TrafficProcessorHolder<C>,
-    ) -> u64 {
+    ) -> Result<u64, RouterError> {
         let meta_req = HandlerMetaReq {
             s_type: SystemSType::HandlerMetaReq,
             handler_name: name.to_string(),
         };
-        let data = s_type::to_vec(&meta_req).unwrap();
-        let mut data = processor.post_process_traffic(data).await;
-        stream.send(data.into()).await.unwrap();
-        let mut ans = processor
-            .pre_process_traffic(wait_for_data(stream).await)
-            .await;
-        let meta_ans = s_type::from_slice::<HandlerMetaAns>(ans.as_mut()).unwrap();
-        meta_ans.id
+
+        let serialized = s_type::to_vec(&meta_req)
+            .ok_or(RouterError::Protocol("serialization failed".into()))?;
+
+        let processed = processor.post_process_traffic(serialized).await;
+
+        stream.send(processed.into()).await?;
+
+        let response = wait_for_data(stream)
+            .await
+            .map_err(|_| RouterError::ConnectionClosed)?;
+
+        let mut response = processor.pre_process_traffic(response).await;
+
+        let meta_ans = s_type::from_slice::<HandlerMetaAns>(response.as_mut())
+            .map_err(|e| RouterError::Protocol(e.to_string()))?;
+
+        Ok(meta_ans.id)
     }
 }

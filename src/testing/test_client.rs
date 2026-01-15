@@ -91,7 +91,7 @@ impl TestRecv {
         );
         Some(res)
     }
-    
+
 }
 
 pub async fn init_client<C>(c: C) -> ((ClientConnect), Arc<Mutex<TestRecv>>)
@@ -119,5 +119,5 @@ where
         15
     )
     .await;
-    return (connection, test_recv);
+    return (connection.unwrap(), test_recv);
 }
