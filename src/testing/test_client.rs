@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::client::{ClientConnect, Receiver, ReceiverHandle};
+use crate::client::{ClientConnect, DataConsumer};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
@@ -25,13 +25,34 @@ pub struct TestRecv {
     id: u64,
 }
 #[async_trait]
-impl Receiver for TestRecv {
-    async fn get_handler_name(&self) -> String {
-        String::from("TestHandler")
+impl DataConsumer for TestRecv {
+
+    async fn response_received(&mut self, handler_id: u64, response: BytesMut) {
+        let received = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_micros() as u64;
+
+        println!(
+            "delay {} microseconds",
+            received - self.response_send.lock().await.load(Relaxed)
+        );
+        let resp: Result<InitialResponse, String> = s_type::from_slice(&response);
+        if resp.is_err() {
+            let resp: Result<PayloadResponse, String> = s_type::from_slice(&response);
+            if resp.is_err() {
+                println!("Erro!");
+                return;
+            }
+            println!("success");
+        } else {
+            let resp = resp.unwrap();
+            println!("success {}", resp.response);
+        }
     }
 }
 impl TestRecv {
-    async fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)> {
+    pub async fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)> {
         let res: (Vec<u8>, Box<dyn StructureType>) =
             if self.counter.lock().await.load(Relaxed) % 2 == 0 {
                 let pre_val = InitialRequest {
@@ -70,33 +91,10 @@ impl TestRecv {
         );
         Some(res)
     }
-
-    async fn receive_response(&mut self, response: BytesMut) {
-        let received = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_micros() as u64;
-
-        println!(
-            "delay {} microseconds",
-            received - self.response_send.lock().await.load(Relaxed)
-        );
-        let resp: Result<InitialResponse, String> = s_type::from_slice(&response);
-        if resp.is_err() {
-            let resp: Result<PayloadResponse, String> = s_type::from_slice(&response);
-            if resp.is_err() {
-                println!("Erro!");
-                return;
-            }
-            println!("success");
-        } else {
-            let resp = resp.unwrap();
-            println!("success {}", resp.response);
-        }
-    }
+    
 }
 
-pub async fn init_client<C>(c: C) -> ((ClientConnect, Vec<ReceiverHandle>), Arc<Mutex<TestRecv>>)
+pub async fn init_client<C>(c: C) -> ((ClientConnect), Arc<Mutex<TestRecv>>)
 where
     C: Encoder<Bytes, Error = io::Error>
         + Decoder<Item = BytesMut, Error = io::Error>
@@ -115,10 +113,10 @@ where
     let connection = ClientConnect::new(
         "127.0.0.1".to_string(),
         "127.0.0.1:3333".to_string(),
-        vec![test_recv.clone()],
         Some(processor_holder),
         c,
         None,
+        15
     )
     .await;
     return (connection, test_recv);
