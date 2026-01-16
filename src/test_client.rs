@@ -25,6 +25,7 @@ pub async fn main() {
                 s_type: req.1,
             },
                 consumer: client.1.clone(),
+                payload_id: 25,
             };
             client.0.dispatch_request(cli_request).await.unwrap();
         }

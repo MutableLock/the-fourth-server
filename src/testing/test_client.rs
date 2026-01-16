@@ -27,7 +27,7 @@ pub struct TestRecv {
 #[async_trait]
 impl DataConsumer for TestRecv {
 
-    async fn response_received(&mut self, handler_id: u64, response: BytesMut) {
+    async fn response_received(&mut self, handler_id: u64, payload_id: u64 ,response: BytesMut) {
         let received = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")

@@ -38,7 +38,7 @@ pub struct ClientConnect {
 }
 #[async_trait]
 pub trait DataConsumer: Send + Sync {
-    async fn response_received(&mut self, handler_id: u64, response: BytesMut);
+    async fn response_received(&mut self, handler_id: u64, payload_id: u64, response: BytesMut);
 }
 
 pub struct HandlerInfo {
@@ -79,16 +79,17 @@ pub struct DataRequest {
 pub struct ClientRequest {
     pub req: DataRequest,
     pub consumer: Arc<Mutex<dyn DataConsumer>>,
+    pub payload_id: u64, //Any value that you want, to indetify response
 }
 
 impl ClientConnect {
     pub async fn new<
         C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+            + Decoder<Item = BytesMut, Error = io::Error>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     >(
         server_name: String,
         connection_dest: String,
@@ -133,11 +134,11 @@ impl ClientConnect {
 
     fn connection_main<
         C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+            + Decoder<Item = BytesMut, Error = io::Error>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     >(
         mut socket: Framed<Transport, C>,
         processor: Option<TrafficProcessorHolder<C>>,
@@ -148,13 +149,8 @@ impl ClientConnect {
 
         tokio::spawn(async move {
             while let Some(request) = rx.recv().await {
-                if let Err(err) = Self::process_request(
-                    request,
-                    &mut socket,
-                    &mut processor,
-                    &mut router,
-                )
-                    .await
+                if let Err(err) =
+                    Self::process_request(request, &mut socket, &mut processor, &mut router).await
                 {
                     eprintln!("Client request failed: {:?}", err);
                 }
@@ -162,14 +158,13 @@ impl ClientConnect {
         });
     }
 
-
     async fn process_request<
         C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+            + Decoder<Item = BytesMut, Error = io::Error>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     >(
         request: ClientRequest,
         socket: &mut Framed<Transport, C>,
@@ -203,9 +198,7 @@ impl ClientConnect {
             .ok_or_else(|| ClientError::Protocol("PacketMeta serialization failed".into()))?;
 
         let meta_bytes = processor.post_process_traffic(meta_vec).await;
-        let payload = processor
-            .post_process_traffic(request.req.data)
-            .await;
+        let payload = processor.post_process_traffic(request.req.data).await;
 
         socket.send(Bytes::from(meta_bytes)).await?;
         socket.send(Bytes::from(payload)).await?;
@@ -217,22 +210,20 @@ impl ClientConnect {
             .consumer
             .lock()
             .await
-            .response_received(handler_id, response)
+            .response_received(handler_id, request.payload_id, response)
             .await;
 
         Ok(())
     }
-
-
 }
 
 pub async fn wait_for_data<
     C: Encoder<Bytes, Error = io::Error>
-    + Decoder<Item = BytesMut, Error = io::Error>
-    + Clone
-    + Send
-    + Sync
-    + 'static,
+        + Decoder<Item = BytesMut, Error = io::Error>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 >(
     socket: &mut Framed<Transport, C>,
 ) -> Result<BytesMut, ClientError> {
