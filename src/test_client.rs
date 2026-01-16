@@ -18,16 +18,18 @@ pub async fn main() {
     loop{
         sleep(Duration::from_secs(1)).await;
         let req = client.1.lock().await.get_request().await;
+        let one_shot = tokio::sync::oneshot::channel();
         if let Some(req) = req{
             let cli_request = ClientRequest{req: DataRequest{
                 handler_info: HandlerInfo::new_named("TestHandler".parse().unwrap()),
                 data: req.0,
                 s_type: req.1,
             },
-                consumer: client.1.clone(),
+                consumer: one_shot.0,
                 payload_id: 25,
             };
             client.0.dispatch_request(cli_request).await.unwrap();
+            client.1.lock().await.response_received(one_shot.1.await.unwrap()).await;
         }
     }
     println!("sended stop waiting before exit");

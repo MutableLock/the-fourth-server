@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use bincode::config::{Configuration, Fixint, LittleEndian};
 use num_enum::TryFromPrimitive;
+use serde::de::DeserializeOwned;
 use crate::util::data_cipher::{DataCipher, EncryptionType};
 
 pub static BINCODE_CFG: Configuration<LittleEndian, Fixint> =
@@ -136,7 +137,7 @@ impl StructureType for SystemSType {
     }
 }
 
-pub trait StrongType: Any {
+pub trait StrongType: Any{
     fn get_s_type(&self) -> &dyn StructureType;
 }
 

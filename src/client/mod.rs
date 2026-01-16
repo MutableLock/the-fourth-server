@@ -36,11 +36,8 @@ impl From<io::Error> for ClientError {
 pub struct ClientConnect {
     tx: Sender<ClientRequest>,
 }
-#[async_trait]
-pub trait DataConsumer: Send + Sync {
-    async fn response_received(&mut self, handler_id: u64, payload_id: u64, response: BytesMut);
-}
 
+#[derive( Clone)]
 pub struct HandlerInfo {
     id: Option<u64>,
     named: Option<String>,
@@ -78,7 +75,7 @@ pub struct DataRequest {
 
 pub struct ClientRequest {
     pub req: DataRequest,
-    pub consumer: Arc<Mutex<dyn DataConsumer>>,
+    pub consumer: tokio::sync::oneshot::Sender<BytesMut>,
     pub payload_id: u64, //Any value that you want, to indetify response
 }
 
@@ -206,12 +203,9 @@ impl ClientConnect {
         let response = wait_for_data(socket).await?;
         let response = processor.pre_process_traffic(response).await;
 
-        request
+        let _ = request
             .consumer
-            .lock()
-            .await
-            .response_received(handler_id, request.payload_id, response)
-            .await;
+            .send(response);
 
         Ok(())
     }

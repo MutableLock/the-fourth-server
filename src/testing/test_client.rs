@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::client::{ClientConnect, DataConsumer};
+use crate::client::{ClientConnect};
 use crate::structures::s_type;
 use crate::structures::s_type::StructureType;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
@@ -24,10 +24,8 @@ pub struct TestRecv {
     response_send: Arc<Mutex<AtomicU64>>,
     id: u64,
 }
-#[async_trait]
-impl DataConsumer for TestRecv {
-
-    async fn response_received(&mut self, handler_id: u64, payload_id: u64 ,response: BytesMut) {
+impl TestRecv {
+    pub async fn response_received(&mut self, response: BytesMut) {
         let received = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -51,6 +49,9 @@ impl DataConsumer for TestRecv {
         }
     }
 }
+
+    
+
 impl TestRecv {
     pub async fn get_request(&mut self) -> Option<(Vec<u8>, Box<dyn StructureType>)> {
         let res: (Vec<u8>, Box<dyn StructureType>) =
