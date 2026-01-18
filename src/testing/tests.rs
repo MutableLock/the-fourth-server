@@ -18,6 +18,7 @@ use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use crate::codec::codec_trait::TfCodec;
 use crate::structures::transport::Transport;
 
 struct TestHandler<C>
@@ -27,7 +28,7 @@ where
         + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static +TfCodec,
 {
     moved_streams: Vec<Framed<Transport, C>>,
 }
@@ -39,7 +40,7 @@ where
         + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static +TfCodec,
 {
     type Codec = C;
 

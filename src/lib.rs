@@ -2,6 +2,7 @@ pub mod util;
 pub mod structures;
 pub mod server;
 pub mod client;
+pub mod codec;
 
 pub use openssl;
 pub use bincode;

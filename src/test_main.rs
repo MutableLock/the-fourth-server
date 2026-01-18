@@ -2,6 +2,7 @@ pub mod client;
 pub mod server;
 pub mod structures;
 pub mod util;
+pub mod codec;
 
 use std::io;
 use crate::server::handler::Handler;
@@ -23,7 +24,9 @@ use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tokio::time::sleep;
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed};
+use crate::codec::codec_trait::TfCodec;
+use crate::codec::length_delimited::LengthDelimitedCodec;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::structures::transport::Transport;
 use crate::testing::test_proc::TestProcessor;
@@ -48,7 +51,7 @@ where
     + Clone
     + Send
     + Sync
-    + 'static, {
+    + 'static +TfCodec, {
     type Codec = C;
 
     async fn serve_route(
@@ -121,6 +124,9 @@ where
         self.moved_streams.push(stream.0);
     }
 }
+
+
+
 #[tokio::main]
 pub async fn main() {
     let mut router = TcpServerRouter::new(Box::new(TestStructureType::HighPayloadRequest));

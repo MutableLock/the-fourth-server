@@ -3,12 +3,13 @@ pub mod server;
 pub mod structures;
 pub mod util;
 pub mod testing;
+pub mod codec;
 
 use std::time::Duration;
 use futures_util::SinkExt;
 use tokio::time::sleep;
-use tokio_util::codec::LengthDelimitedCodec;
 use crate::client::{ClientRequest, DataRequest, HandlerInfo};
+use crate::codec::length_delimited::LengthDelimitedCodec;
 use crate::testing::test_client::init_client;
 
 

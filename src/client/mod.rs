@@ -16,6 +16,7 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::ClientConfig;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use crate::codec::codec_trait::TfCodec;
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -86,19 +87,20 @@ impl ClientConnect {
             + Clone
             + Send
             + Sync
-            + 'static,
+            + 'static
+            + TfCodec,
     >(
         server_name: String,
         connection_dest: String,
         processor: Option<TrafficProcessorHolder<C>>,
-        codec: C,
+        mut codec: C,
         client_config: Option<ClientConfig>,
         max_request_in_time: usize,
     ) -> Result<Self, ClientError> {
         let socket = TcpStream::connect(connection_dest).await?;
         socket.set_nodelay(true)?;
 
-        let transport = if let Some(client_config) = client_config {
+        let mut transport = if let Some(client_config) = client_config {
             let connector = TlsConnector::from(Arc::new(client_config));
             let domain = server_name
                 .try_into()
@@ -113,7 +115,9 @@ impl ClientConnect {
         } else {
             Transport::plain(socket)
         };
-
+        if !codec.initial_setup(&mut transport).await {
+            panic!("Failed to initial setup transport");
+        }
         let framed = Framed::new(transport, codec);
         let (tx, rx) = mpsc::channel(max_request_in_time);
 
@@ -135,7 +139,8 @@ impl ClientConnect {
             + Clone
             + Send
             + Sync
-            + 'static,
+            + 'static
+        +TfCodec,
     >(
         mut socket: Framed<Transport, C>,
         processor: Option<TrafficProcessorHolder<C>>,
@@ -161,7 +166,8 @@ impl ClientConnect {
             + Clone
             + Send
             + Sync
-            + 'static,
+            + 'static
+        +TfCodec,
     >(
         request: ClientRequest,
         socket: &mut Framed<Transport, C>,
@@ -217,7 +223,8 @@ pub async fn wait_for_data<
         + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+    +TfCodec,
 >(
     socket: &mut Framed<Transport, C>,
 ) -> Result<BytesMut, ClientError> {

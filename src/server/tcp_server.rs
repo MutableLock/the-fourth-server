@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Instant;
+use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify};
 
 use crate::server::handler::Handler;
@@ -17,20 +18,23 @@ use tokio::io;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_rustls::rustls::internal::msgs::codec::Codec;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use crate::codec::codec_trait::TfCodec;
 
 pub type RequestChannel<C>
 where
     C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-= (
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Send
+    + Sync
+    + Clone
+    + 'static
+    +TfCodec,
+ = (
     Sender<Arc<Mutex<dyn Handler<Codec = C>>>>,
     Receiver<Arc<Mutex<dyn Handler<Codec = C>>>>,
 );
@@ -38,11 +42,11 @@ where
 pub struct TcpServer<C>
 where
     C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Send
+    + Sync
+    + Clone
+    + 'static + TfCodec,
 {
     router: Arc<TcpServerRouter<C>>,
     socket: Arc<TcpListener>,
@@ -55,11 +59,11 @@ where
 impl<C> TcpServer<C>
 where
     C: Encoder<Bytes, Error = io::Error>
-        + Decoder<Item = BytesMut, Error = io::Error>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    + Decoder<Item = BytesMut, Error = io::Error>
+    + Send
+    + Sync
+    + Clone
+    + 'static + TfCodec,
 {
     pub async fn new(
         bind_address: String,
@@ -104,10 +108,13 @@ where
                             if res.is_ok() {
                                 let mut stream = res.unwrap();
                                 stream.0.set_nodelay(true).unwrap();
-                                let transport = Self::initial_accept(stream.0, config.clone()).await;
+                                let codec = codec.clone();
+
+
+                                let transport = Self::initial_accept(stream.0, config.clone(), codec).await;
                                 if let Some(mut transport) = transport {
-                                 if processor.initial_connect(&mut transport).await {
-                                    let mut framed = Framed::new(transport, codec.clone());
+                                 if processor.initial_connect(&mut transport.0).await {
+                                    let mut framed = Framed::new(transport.0, transport.1);
 
                                 if processor.initial_framed_connect(&mut framed).await {
                                     let router = router.clone();
@@ -124,7 +131,7 @@ where
                                     });
                                 }
                                 } else {
-                                    let _ = transport.shutdown().await;
+                                    let _ = transport.0.shutdown().await;
                                 }
                             }
 
@@ -136,9 +143,13 @@ where
         });
     }
 
-    async fn initial_accept(stream: TcpStream, config: Option<ServerConfig>) -> Option<Transport> {
+    async fn initial_accept(mut stream: TcpStream, config: Option<ServerConfig>, mut codec_setup: C) -> Option<(Transport, C)> {
         if config.is_none() {
-            return Some(Transport::plain(stream));
+            let mut res = Transport::plain(stream);
+            if !codec_setup.initial_setup(&mut res).await {
+                return None;
+            }
+            return Some((res, codec_setup));
         } else {
             let cfg = config.unwrap();
             let acceptor = TlsAcceptor::from(Arc::new(cfg));
@@ -146,7 +157,11 @@ where
             if res.is_err() {
                 return None;
             }
-            return Some(Transport::tls_server(res.unwrap()));
+            let mut res = Transport::tls_server(res.unwrap());
+            if !codec_setup.initial_setup(&mut res).await {
+                return None;
+            }
+            return Some((res, codec_setup));
         }
     }
 

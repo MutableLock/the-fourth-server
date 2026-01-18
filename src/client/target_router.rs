@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use crate::codec::codec_trait::TfCodec;
 
 #[derive(Debug)]
 pub enum RouterError {
@@ -45,7 +46,8 @@ impl TargetRouter {
         + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        +TfCodec,
     >(
         &mut self,
         route: &str,
@@ -67,7 +69,8 @@ impl TargetRouter {
         + Clone
         + Send
         + Sync
-        + 'static,
+        + 'static
+        +TfCodec,
     >(
         name: &str,
         stream: &mut Framed<Transport, C>,

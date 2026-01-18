@@ -18,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
+use crate::codec::codec_trait::TfCodec;
 
 pub struct TestRecv {
     counter: Arc<Mutex<AtomicU64>>,
@@ -102,7 +103,8 @@ where
         + Clone
         + Send
         + 'static
-        + std::marker::Sync,
+        + std::marker::Sync
++TfCodec,
 {
     let mut processor_holder: TrafficProcessorHolder<C> = TrafficProcessorHolder::new();
     processor_holder.register_processor(Box::new(TestProcessor::new(c.clone())));

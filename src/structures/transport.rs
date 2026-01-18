@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::io;
 use futures_util::Stream;
+use crate::structures::traffic_proc::TrafficProcessorHolder;
 
 /// Unified transport using dynamic dispatch
 pub struct Transport {

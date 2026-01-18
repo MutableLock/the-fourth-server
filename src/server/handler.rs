@@ -7,13 +7,14 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot::Sender;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use crate::codec::codec_trait::TfCodec;
 use crate::structures::s_type::StructureType;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::structures::transport::Transport;
 
 #[async_trait]
 pub trait Handler: Send + Sync {
-    type Codec: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static;
+    type Codec: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static + TfCodec;
     async fn serve_route(
         &mut self,
         /*If request needed, call take() on this option

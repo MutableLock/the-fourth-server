@@ -16,7 +16,7 @@ pub trait TrafficProcess: Send + Sync {
     fn clone(&self) -> Box<dyn TrafficProcess<Codec = Self::Codec>>;
 }
 
-pub struct TrafficProcessorHolder<C> where  C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static
+pub struct TrafficProcessorHolder<C> where C: Encoder<Bytes> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send + 'static
 {
     processors: Vec<Box<dyn TrafficProcess<Codec = C>>>,
 }
