@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use bincode::config::{Configuration, Fixint, LittleEndian};
 use num_enum::TryFromPrimitive;
-use serde::de::DeserializeOwned;
 use crate::util::data_cipher::{DataCipher, EncryptionType};
 
 pub static BINCODE_CFG: Configuration<LittleEndian, Fixint> =

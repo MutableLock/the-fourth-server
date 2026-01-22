@@ -3,7 +3,7 @@
 use std::io;
 use async_trait::async_trait;
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 use crate::structures::traffic_proc::TrafficProcess;
 use crate::structures::transport::Transport;
 

@@ -34,7 +34,7 @@ impl Encoder<Bytes> for LengthDelimitedCodec {
 }
 #[async_trait]
 impl TfCodec for LengthDelimitedCodec {
-    async fn initial_setup(&mut self, transport: &mut Transport) -> bool {
+    async fn initial_setup(&mut self, _: &mut Transport) -> bool {
         true
     }
 }

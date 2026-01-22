@@ -4,8 +4,7 @@ use tokio_rustls::{server::TlsStream as ServerTlsStream, client::TlsStream as Cl
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::io;
-use futures_util::Stream;
-use crate::structures::traffic_proc::TrafficProcessorHolder;
+
 
 /// Unified transport using dynamic dispatch
 pub struct Transport {
@@ -39,7 +38,7 @@ impl Transport {
     }
 
     /// Optionally expose inner (if needed)
-    pub fn inner(&mut self) -> &mut (dyn AsyncReadWrite) {
+    pub fn inner(&mut self) -> &mut dyn AsyncReadWrite {
         &mut *self.inner
     }
 }

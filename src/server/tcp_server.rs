@@ -6,34 +6,24 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Instant;
-use async_trait::async_trait;
+
 use tokio::sync::{Mutex, Notify};
 
 use crate::server::handler::Handler;
 use crate::structures::traffic_proc::TrafficProcessorHolder;
 use crate::structures::transport::Transport;
-use futures_util::{SinkExt, Stream};
+use futures_util::{SinkExt};
 use tokio::io;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_rustls::rustls::internal::msgs::codec::Codec;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder, Framed, LengthDelimitedCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 use crate::codec::codec_trait::TfCodec;
 
 pub type RequestChannel<C>
-where
-    C: Encoder<Bytes, Error = io::Error>
-    + Decoder<Item = BytesMut, Error = io::Error>
-    + Send
-    + Sync
-    + Clone
-    + 'static
-    +TfCodec,
  = (
     Sender<Arc<Mutex<dyn Handler<Codec = C>>>>,
     Receiver<Arc<Mutex<dyn Handler<Codec = C>>>>,
@@ -106,7 +96,7 @@ where
                 tokio::select! {
                             res = listener.accept() => {
                             if res.is_ok() {
-                                let mut stream = res.unwrap();
+                                let stream = res.unwrap();
                                 stream.0.set_nodelay(true).unwrap();
                                 let codec = codec.clone();
 
@@ -143,7 +133,7 @@ where
         });
     }
 
-    async fn initial_accept(mut stream: TcpStream, config: Option<ServerConfig>, mut codec_setup: C) -> Option<(Transport, C)> {
+    async fn initial_accept(stream: TcpStream, config: Option<ServerConfig>, mut codec_setup: C) -> Option<(Transport, C)> {
         if config.is_none() {
             let mut res = Transport::plain(stream);
             if !codec_setup.initial_setup(&mut res).await {

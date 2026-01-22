@@ -9,7 +9,6 @@ use crate::testing::test_s_type::{
     InitialRequest, InitialResponse, PayloadRequest, PayloadResponse, TestStructureType,
 };
 use crate::util::rand_utils::generate_random_u8_vec;
-use async_trait::async_trait;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -96,14 +95,14 @@ impl TestRecv {
 
 }
 
-pub async fn init_client<C>(c: C) -> ((ClientConnect), Arc<Mutex<TestRecv>>)
+pub async fn init_client<C>(c: C) -> (ClientConnect, Arc<Mutex<TestRecv>>)
 where
     C: Encoder<Bytes, Error = io::Error>
         + Decoder<Item = BytesMut, Error = io::Error>
         + Clone
         + Send
         + 'static
-        + std::marker::Sync
+        + Sync
 +TfCodec,
 {
     let mut processor_holder: TrafficProcessorHolder<C> = TrafficProcessorHolder::new();

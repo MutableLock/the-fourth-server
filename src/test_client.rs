@@ -6,7 +6,6 @@ pub mod testing;
 pub mod codec;
 
 use std::time::Duration;
-use futures_util::SinkExt;
 use tokio::time::sleep;
 use crate::client::{ClientRequest, DataRequest, HandlerInfo};
 use crate::codec::length_delimited::LengthDelimitedCodec;
@@ -15,7 +14,7 @@ use crate::testing::test_client::init_client;
 
 #[tokio::main]
 pub async fn main() {
-    let mut client = init_client(LengthDelimitedCodec::new()).await;
+    let client = init_client(LengthDelimitedCodec::new()).await;
     loop{
         sleep(Duration::from_secs(1)).await;
         let req = client.1.lock().await.get_request().await;
@@ -33,6 +32,6 @@ pub async fn main() {
             client.1.lock().await.response_received(one_shot.1.await.unwrap()).await;
         }
     }
-    println!("sended stop waiting before exit");
-    sleep(Duration::from_millis(1500)).await;
+   // println!("sended stop waiting before exit");
+   // sleep(Duration::from_millis(1500)).await;
 }
