@@ -2,19 +2,20 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use crate::structures::transport::Transport;
 
-pub struct TempTransport<'a> {
-    base_transport: &'a mut Transport,
+pub struct TempTransport<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
+    base_transport: &'a mut T,
 }
 
-impl<'a> TempTransport<'a> {
-    pub fn new(transport: &'a mut Transport) -> Self {
-        TempTransport { base_transport: transport }
+impl<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync> TempTransport<'a, T> {
+    pub fn new(transport: &'a mut T) -> Self {
+        TempTransport {
+            base_transport: transport,
+        }
     }
 }
 
-impl<'a> AsyncRead for TempTransport<'a> {
+impl<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync> AsyncRead for TempTransport<'a, T> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -24,7 +25,7 @@ impl<'a> AsyncRead for TempTransport<'a> {
     }
 }
 
-impl<'a> AsyncWrite for TempTransport<'a> {
+impl<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync> AsyncWrite for TempTransport<'a, T> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
