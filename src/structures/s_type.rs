@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use bincode::config::{Configuration, Fixint, LittleEndian};
 use num_enum::TryFromPrimitive;
-use crate::util::data_cipher::{DataCipher, EncryptionType};
 
 pub static BINCODE_CFG: Configuration<LittleEndian, Fixint> =
     bincode::config::standard()
@@ -31,7 +30,6 @@ impl ServerError {
     }
 }
 
-
 pub trait StructureType: Any + Send + Sync{
      fn get_type_id(&self) -> TypeId;
     fn equals(&self, other: &dyn StructureType) -> bool;
@@ -52,18 +50,6 @@ pub enum SystemSType {
     HandlerMetaReq,
     HandlerMetaAns,
     ServerError,
-    EncryptedContainer,
-}
-#[derive(Serialize, Deserialize)]
-pub struct EncryptedContainer{
-    s_type: SystemSType,
-    data: Vec<u8>,
-}
-
-impl StrongType for EncryptedContainer{
-    fn get_s_type(&self) -> &(dyn StructureType + 'static) {
-        &self.s_type
-    }
 }
 
 impl StrongType for ServerError {
@@ -98,9 +84,6 @@ impl StructureType for SystemSType {
                 TypeId::of::<ServerError>()
             }
 
-            Self::EncryptedContainer => {
-                TypeId::of::<EncryptedContainer>()
-            }
         }
     }
 
@@ -236,46 +219,6 @@ pub fn to_vec<T: Serialize + StrongType>(arg: &T) -> Option<Vec<u8>> {
     Some(res.unwrap())
 }
 
-pub fn to_vec_encrypted<T: Serialize + StrongType>(arg: &T, encryption_type: EncryptionType, key: String, iv: &[u8]) -> Option<Vec<u8>> {
-    let data = to_vec(arg);
-    if data.is_none() {
-        return None;
-    }
-    let data = data.unwrap();
-    let cipher = DataCipher::new_init(encryption_type, key);
-    let len = cipher.required_buffer_size(data.len());
-    let mut res = Vec::with_capacity(len);
-    unsafe {
-        res.set_len(len);
-    }
-    let len_res = cipher.encrypt_block(data.as_slice(), res.as_mut_slice(), iv);
-    if len_res.is_err() {
-        return None;
-    }
-    res.shrink_to(len_res.unwrap());
-    let container = EncryptedContainer{s_type: SystemSType::EncryptedContainer, data: res};
-    to_vec(&container)
-}
-
-pub fn from_encrypted_slice<T: for<'a> Deserialize<'a> + StrongType>(arg: &[u8], encryption_type: EncryptionType, key: String, iv: &[u8]) -> Result<T, String>{
-    let container: Result<EncryptedContainer, String> = from_slice(arg);
-    if container.is_err() {
-        return Err(container.err().unwrap());
-    }
-    let container = container.unwrap();
-    let cipher = DataCipher::new_init(encryption_type, key);
-    let mut pre_res: Vec<u8> = Vec::with_capacity(container.data.len());
-    unsafe{
-        pre_res.set_len(container.data.len());
-    }
-    let res = cipher.decrypt_block(container.data.as_slice(), pre_res.as_mut_slice(), iv);
-    if res.is_err() {
-        return Err("Failed to decrypt block".to_string());
-    }
-    let res = res.unwrap();
-    pre_res.shrink_to(res);
-    from_slice(&pre_res)
-}
 
 pub fn from_slice<T: for<'a> Deserialize<'a> + StrongType>(arg: &[u8]) -> Result<T, String> {
     let res = bincode::serde::decode_from_slice::<T, Configuration<LittleEndian, Fixint>>(arg, BINCODE_CFG.clone());

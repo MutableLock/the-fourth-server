@@ -4,7 +4,6 @@ pub mod server;
 pub mod client;
 pub mod codec;
 
-pub use openssl;
 pub use bincode;
 pub use sha2;
 pub use async_trait;
