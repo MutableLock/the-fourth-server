@@ -14,7 +14,6 @@ use crate::testing::test_s_type::{
     InitialRequest, InitialResponse, PayloadRequest, PayloadResponse, TestError, TestStructureType,
 };
 pub use bincode;
-pub use openssl;
 pub use sha2;
 use std::net::SocketAddr;
 use std::sync::Arc;
