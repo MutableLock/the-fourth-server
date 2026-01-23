@@ -17,6 +17,7 @@ use tokio::io;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_util::bytes::{Bytes, BytesMut};
@@ -76,7 +77,7 @@ where
         }
     }
 
-    pub async fn start(&mut self) {
+    pub async fn start(&mut self) -> JoinHandle<()>{
         let (listener, router, shutdown_sig) = {
             (
                 self.socket.clone(),
@@ -130,7 +131,7 @@ where
                     _ = shutdown_sig.notified() => break,
                 }
             }
-        });
+        })
     }
 
     async fn initial_accept(stream: TcpStream, config: Option<ServerConfig>, mut codec_setup: C) -> Option<(Transport, C)> {
