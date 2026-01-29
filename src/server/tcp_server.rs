@@ -24,11 +24,22 @@ use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use crate::codec::codec_trait::TfCodec;
 
+///The request channel, used to move out tcp stream out of server control.
+///
+///When the stream is moved, the server does not owns it anymore.
+///
+///If is there need to return stream, only reconnect is available.
 pub type RequestChannel<C>
  = (
     Sender<Arc<Mutex<dyn Handler<Codec = C>>>>,
     Receiver<Arc<Mutex<dyn Handler<Codec = C>>>>,
 );
+
+///Base binary tcp server.
+///
+/// 'C' is you codec, that you want to use to encode/decode data.
+///
+///Recommended default codec is LengthDelimitedCodec, from the server codec module.
 
 pub struct TcpServer<C>
 where
@@ -56,6 +67,13 @@ where
     + Clone
     + 'static + TfCodec,
 {
+    ///Creates a new instance of a server.
+    ///
+    /// 'bind_address' is a target address to bind current server. E.g: 0.0.0.0:8080
+    /// 'router' setted up router with handlers. Must be called commit_routes before using.
+    /// 'processor' Custom traffic processor, used for all streams.
+    /// 'codec' basically codec used for every stream with it's own instance, when the codec is applied to stream, first call is clone, the second call is initial_setup.
+    /// 'config' optional config for tls connection, when None the tls is not using, when some all connections are passed behind tls.
     pub async fn new(
         bind_address: String,
         router: Arc<TcpServerRouter<C>>,
@@ -77,6 +95,9 @@ where
         }
     }
 
+    ///Start the task for handling connections.
+    ///
+    ///Return the join handle, of this task.
     pub async fn start(&mut self) -> JoinHandle<()>{
         let (listener, router, shutdown_sig) = {
             (
@@ -134,6 +155,7 @@ where
         })
     }
 
+    ///Initial accept called for every connection, on connected event.
     async fn initial_accept(stream: TcpStream, config: Option<ServerConfig>, mut codec_setup: C) -> Option<(Transport, C)> {
         if config.is_none() {
             let mut res = Transport::plain(stream);
@@ -155,11 +177,12 @@ where
             return Some((res, codec_setup));
         }
     }
-
+    ///Stops the acceptor task.
     pub fn send_stop(&self) {
         self.shutdown_sig.notify_one();
     }
-
+    
+    ///Main function for every connection
     async fn handle_connection(
         addr: SocketAddr,
         mut stream: Framed<Transport, C>,

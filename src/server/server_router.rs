@@ -14,6 +14,9 @@ use crate::structures::s_type;
 use crate::structures::s_type::{HandlerMetaAns, HandlerMetaReq, PacketMeta, ServerError, ServerErrorEn, StructureType, SystemSType, TypeContainer, TypeTupple};
 use crate::structures::s_type::ServerErrorEn::InternalError;
 
+
+///Tcp server router.
+///Handles the every data route destination
 pub struct TcpServerRouter<C>
 where
     C:  Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync+ 'static +TfCodec {
@@ -28,6 +31,10 @@ where
 impl<C> TcpServerRouter<C>
 where
     C: Encoder<Bytes, Error = io::Error> + Decoder<Item = BytesMut, Error = io::Error> + Clone + Send  + Sync + 'static +TfCodec {
+    
+    ///Returns the new instance of router
+    ///
+    /// 'user_s_type' random enum value of current project defined structure_type
     pub fn new(user_s_type: Box<dyn StructureType>) -> Self {
         Self {
             routes: Arc::new(HashMap::new()),
@@ -39,6 +46,10 @@ where
         }
     }
 
+    ///Registers the new handler, for selected structure types
+    ///
+    /// 'handler_name' must be the same on the client site, used for initial identification. When client sends request to server.
+    /// 's_type' handled structure types by current handler.
     pub fn add_route(
         &mut self,
         handler: Arc<Mutex<dyn Handler<Codec = C>>>,
@@ -61,6 +72,7 @@ where
         self.router_incremental += 1;
     }
 
+    ///Commits the registered handlers. Making the current router is final and ready to be passed to the server
     pub fn commit_routes(&mut self) {
         if self.routes_commited || self.routes_to_add.is_empty() {
             return;
@@ -84,6 +96,7 @@ where
         self.routes.clone()
     }
 
+    ///Called from server connection task
     pub async fn serve_packet(
         &self,
         meta: BytesMut,
