@@ -1,22 +1,21 @@
+use bincode::config::{Configuration, Fixint, LittleEndian};
+use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use bincode::config::{Configuration, Fixint, LittleEndian};
-use num_enum::TryFromPrimitive;
 
-pub static BINCODE_CFG: Configuration<LittleEndian, Fixint> =
-    bincode::config::standard()
-        .with_little_endian()
-        .with_fixed_int_encoding()
-        .with_no_limit();
+pub static BINCODE_CFG: Configuration<LittleEndian, Fixint> = bincode::config::standard()
+    .with_little_endian()
+    .with_fixed_int_encoding()
+    .with_no_limit();
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ServerErrorEn {
     MalformedMetaInfo(Option<String>),
     NoSuchHandler(Option<String>),
     InternalError(Option<Vec<u8>>),
-    PayloadLost
+    PayloadLost,
 }
 #[derive(Serialize, Deserialize)]
 pub struct ServerError {
@@ -26,23 +25,42 @@ pub struct ServerError {
 
 impl ServerError {
     pub fn new(en: ServerErrorEn) -> Self {
-        Self{s_type: SystemSType::ServerError, en}
+        Self {
+            s_type: SystemSType::ServerError,
+            en,
+        }
     }
 }
 
-pub trait StructureType: Any + Send + Sync{
-     fn get_type_id(&self) -> TypeId;
+///The trait for you structure type enum. Needed for proper routing of packets and type safety on serialization/deserialization of data.
+///
+///You need to create your own structure type for every project.
+///
+///There are a bunch of functions that already exists, from other traits. They kept manualy due to dyn compatibility.
+pub trait StructureType: Any + Send + Sync {
+    fn get_type_id(&self) -> TypeId;
+    ///We don't use the equals from rust trait, due to need of dyn compatibility
     fn equals(&self, other: &dyn StructureType) -> bool;
+
     fn as_any(&self) -> &dyn Any;
 
     fn hash(&self) -> u64;
 
+    ///We don't use the equals from rust trait, due to need of dyn compatibility
     fn clone_unique(&self) -> Box<dyn StructureType>;
 
+    ///Returns the pointer to function that deserializes value into the current structure type
     fn get_deserialize_function(&self) -> Box<dyn Fn(u64) -> Box<dyn StructureType>>;
-
+    ///Returns the pointer to function that serializes structure type value into the u64 value.
     fn get_serialize_function(&self) -> Box<dyn Fn(Box<dyn StructureType>) -> u64>;
 }
+
+///Needed to be applied to the serializable/deserializable structures
+pub trait StrongType: Any {
+    ///Need to return reference of structure type enum inside structure
+    fn get_s_type(&self) -> &dyn StructureType;
+}
+
 #[repr(u8)]
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, TryFromPrimitive, Copy)]
 pub enum SystemSType {
@@ -58,38 +76,33 @@ impl StrongType for ServerError {
     }
 }
 
-impl SystemSType{
+impl SystemSType {
     pub fn deserialize(val: u64) -> Box<dyn StructureType> {
         Box::new(SystemSType::try_from(val as u8).unwrap())
     }
 
-    pub fn serialize(refer: Box<dyn StructureType>) -> u64{
-        refer.as_any().downcast_ref::<SystemSType>().unwrap().clone() as u8 as u64
+    pub fn serialize(refer: Box<dyn StructureType>) -> u64 {
+        refer
+            .as_any()
+            .downcast_ref::<SystemSType>()
+            .unwrap()
+            .clone() as u8 as u64
     }
 }
 
 impl StructureType for SystemSType {
     fn get_type_id(&self) -> TypeId {
         return match self {
-            Self::PacketMeta => {
-                TypeId::of::<PacketMeta>()
-            }
-            Self::HandlerMetaAns => {
-                TypeId::of::<HandlerMetaAns>()
-            }
-            Self::HandlerMetaReq => {
-                TypeId::of::<HandlerMetaReq>()
-            }
-            Self::ServerError => {
-                TypeId::of::<ServerError>()
-            }
-
-        }
+            Self::PacketMeta => TypeId::of::<PacketMeta>(),
+            Self::HandlerMetaAns => TypeId::of::<HandlerMetaAns>(),
+            Self::HandlerMetaReq => TypeId::of::<HandlerMetaReq>(),
+            Self::ServerError => TypeId::of::<ServerError>(),
+        };
     }
 
     fn equals(&self, other: &dyn StructureType) -> bool {
         let downcast = other.as_any().downcast_ref::<Self>();
-        if downcast.is_none(){
+        if downcast.is_none() {
             return false;
         }
         let downcast = downcast.unwrap();
@@ -99,8 +112,8 @@ impl StructureType for SystemSType {
         self
     }
 
-    fn hash(&self) -> u64{
-        let mut hasher  = DefaultHasher::default();
+    fn hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::default();
         TypeId::of::<Self>().hash(&mut hasher);
         ((*self).clone() as u8).hash(&mut hasher);
         return hasher.finish();
@@ -119,10 +132,6 @@ impl StructureType for SystemSType {
     }
 }
 
-pub trait StrongType: Any{
-    fn get_s_type(&self) -> &dyn StructureType;
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PacketMeta {
     pub s_type: SystemSType,
@@ -132,7 +141,7 @@ pub struct PacketMeta {
 }
 
 impl StrongType for PacketMeta {
-    fn get_s_type(&self) -> &dyn StructureType{
+    fn get_s_type(&self) -> &dyn StructureType {
         &self.s_type
     }
 }
@@ -161,14 +170,13 @@ impl StrongType for HandlerMetaAns {
     }
 }
 
-
-pub struct TypeContainer{
+pub struct TypeContainer {
     s_type: Box<dyn StructureType>,
 }
 
 impl TypeContainer {
     pub fn new(s_type: Box<dyn StructureType>) -> Self {
-        Self{s_type}
+        Self { s_type }
     }
 }
 
@@ -178,9 +186,7 @@ impl PartialEq<Self> for TypeContainer {
     }
 }
 
-impl Eq for TypeContainer {
-
-}
+impl Eq for TypeContainer {}
 
 impl Hash for TypeContainer {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -190,10 +196,11 @@ impl Hash for TypeContainer {
 
 impl Clone for TypeContainer {
     fn clone(&self) -> Self {
-        Self{s_type: self.s_type.clone_unique()}
+        Self {
+            s_type: self.s_type.clone_unique(),
+        }
     }
 }
-
 
 #[derive(Eq, Clone)]
 pub struct TypeTupple {
@@ -205,7 +212,7 @@ pub fn validate_s_type(target: &dyn StrongType) -> bool {
     let s_type = target.get_s_type();
     return s_type.get_type_id() == target.type_id();
 }
-
+///Function that serializes object into binary data with type safety/
 pub fn to_vec<T: Serialize + StrongType>(arg: &T) -> Option<Vec<u8>> {
     if !validate_s_type(arg) {
         eprintln!("stype validation failed");
@@ -218,12 +225,17 @@ pub fn to_vec<T: Serialize + StrongType>(arg: &T) -> Option<Vec<u8>> {
     }
     Some(res.unwrap())
 }
-
-
+///Function that deserializes the binary data into the requested structure with type safety checks.
 pub fn from_slice<T: for<'a> Deserialize<'a> + StrongType>(arg: &[u8]) -> Result<T, String> {
-    let res = bincode::serde::decode_from_slice::<T, Configuration<LittleEndian, Fixint>>(arg, BINCODE_CFG.clone());
+    let res = bincode::serde::decode_from_slice::<T, Configuration<LittleEndian, Fixint>>(
+        arg,
+        BINCODE_CFG.clone(),
+    );
     if res.is_err() {
-        let error_server = bincode::serde::decode_from_slice::<ServerError, Configuration<LittleEndian, Fixint>>(arg, BINCODE_CFG.clone());
+        let error_server = bincode::serde::decode_from_slice::<
+            ServerError,
+            Configuration<LittleEndian, Fixint>,
+        >(arg, BINCODE_CFG.clone());
         if error_server.is_err() {
             return Err("Unknown packet type".to_string());
         }
@@ -231,7 +243,10 @@ pub fn from_slice<T: for<'a> Deserialize<'a> + StrongType>(arg: &[u8]) -> Result
     }
     let res = res.unwrap().0;
     if !validate_s_type(&res) {
-        let error_server = bincode::serde::decode_from_slice::<ServerError, Configuration<LittleEndian, Fixint>>(&arg, BINCODE_CFG.clone());
+        let error_server = bincode::serde::decode_from_slice::<
+            ServerError,
+            Configuration<LittleEndian, Fixint>,
+        >(&arg, BINCODE_CFG.clone());
         if error_server.is_err() {
             return Err("Unknown packet type".to_string());
         }
@@ -242,7 +257,7 @@ pub fn from_slice<T: for<'a> Deserialize<'a> + StrongType>(arg: &[u8]) -> Result
 
 impl PartialEq<Self> for TypeTupple {
     fn eq(&self, other: &Self) -> bool {
-        let iterator_list = if self.s_types.len()<other.s_types.len(){
+        let iterator_list = if self.s_types.len() < other.s_types.len() {
             self.s_types.iter()
         } else {
             other.s_types.iter()

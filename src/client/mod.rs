@@ -38,19 +38,21 @@ pub struct ClientConnect {
 }
 
 #[derive( Clone)]
+///The structure that describes target handler
 pub struct HandlerInfo {
     id: Option<u64>,
     named: Option<String>,
 }
 
 impl HandlerInfo {
+    ///Creates handler info by handler name
     pub fn new_named(name: String) -> Self {
         Self {
             id: None,
             named: Some(name),
         }
     }
-
+    ///Creates handler info by handler id
     pub fn new_id(id: u64) -> Self {
         Self {
             id: Some(id),
@@ -66,20 +68,31 @@ impl HandlerInfo {
         &self.named
     }
 }
-
+/// 'handler_info' info about target handler
+/// 'data' the request payload. E.g structure that will be deserialized on server side.
+/// 's_type' structure type indetifiers what data is send and how handler on server side will process this data.
 pub struct DataRequest {
     pub handler_info: HandlerInfo,
     pub data: Vec<u8>,
     pub s_type: Box<dyn StructureType>,
 }
-
+///The request wrapper struct.
+/// 'req' data request
+/// 'consumer' the signal that will be called by connection, when the response arrives
+ 
 pub struct ClientRequest {
     pub req: DataRequest,
     pub consumer: tokio::sync::oneshot::Sender<BytesMut>,
-    pub payload_id: u64, //Any value that you want, to indetify response
 }
 
 impl ClientConnect {
+    ///Creates and connect to the designated server address
+    /// 'server_name' used for tls mode. You need to pass domain name of the server. If there is no tls, you can pass random data or empty
+    /// 'connection_dest' the (server address/domain name):port. E.g temp_domain.com:443, or 65.88.95.127:9090.
+    /// 'processor' the traffic processor, must be symmetric to the server one processor.
+    /// 'codec' the connection codec. Recommended base LengthDelimitedCodec from module codec.
+    /// 'client_config' the tls config.
+    /// 'max_request_in_time' max amount of requests that can be dispatched in the same time.
     pub async fn new<
         C: Encoder<Bytes, Error = io::Error>
             + Decoder<Item = BytesMut, Error = io::Error>
@@ -125,13 +138,14 @@ impl ClientConnect {
         Ok(Self { tx })
     }
 
+    ///Dispatches the request.
     pub async fn dispatch_request(&self, request: ClientRequest) -> Result<(), ClientError> {
         self.tx
             .send(request)
             .await
             .map_err(|_| ClientError::ChannelClosed)
     }
-
+    
     fn connection_main<
         C: Encoder<Bytes, Error = io::Error>
             + Decoder<Item = BytesMut, Error = io::Error>

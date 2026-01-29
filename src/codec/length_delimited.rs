@@ -5,6 +5,7 @@ use tokio_util::codec::{Decoder, Encoder};
 use crate::codec::codec_trait::TfCodec;
 use crate::structures::transport::Transport;
 #[derive(Clone)]
+///The wrapper aroung existing codec, to be compatible with server
 pub struct LengthDelimitedCodec {
     codec: tokio_util::codec::LengthDelimitedCodec
 }

@@ -5,13 +5,17 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 use crate::structures::transport::Transport;
 
 #[async_trait]
+///A traffic processor trait, that applied to all streams. Processes all stream. If you need setup by each specific stream, use codecs instead
 pub trait TrafficProcess: Send + Sync {
     type Codec;
+    ///The routine that defines if we can connect stream or not
     async fn initial_connect(&mut self, source: &mut Transport) -> bool;
+     ///The routine that defines if we can connect stream or not, but when framed was setted up
     async fn initial_framed_connect(&mut self, source: &mut Framed<Transport, Self::Codec>) -> bool;
+    ///Process every traffic that is handled by server
     async fn post_process_traffic(&mut self, data: Vec<u8>) -> Vec<u8>;
+     ///Process every traffic that is handled by server
     async fn pre_process_traffic(&mut self, data: BytesMut) -> BytesMut;
-
     fn clone(&self) -> Box<dyn TrafficProcess<Codec = Self::Codec>>;
 }
 

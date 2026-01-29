@@ -1,14 +1,13 @@
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream;
-use tokio_rustls::{server::TlsStream as ServerTlsStream, client::TlsStream as ClientTlsStream};
+use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::io;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
+use tokio_rustls::{client::TlsStream as ClientTlsStream, server::TlsStream as ServerTlsStream};
 
-
-/// Unified transport using dynamic dispatch
+/// Unified transport wrapper, for different types of streams
 pub struct Transport {
-    inner: Box<dyn AsyncReadWrite >,
+    inner: Box<dyn AsyncReadWrite>,
 }
 
 /// Trait object to unify AsyncRead + AsyncWrite

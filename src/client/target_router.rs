@@ -24,7 +24,7 @@ impl From<io::Error> for RouterError {
     }
 }
 
-
+///The structures that handler router_name/router_id mapping requests
 pub struct TargetRouter {
     known_routes: HashMap<String, u64>,
 }
@@ -35,11 +35,11 @@ impl TargetRouter {
             known_routes: HashMap::new(),
         }
     }
-
+    ///Returns the id of handler, if the route was already requested from server
     pub fn lookup_route(&self, route: &str) -> Option<u64> {
         self.known_routes.get(route).cloned()
     }
-
+    ///Returns the id of handler, but may request id from server side.
     pub async fn request_route<
         C: Encoder<Bytes, Error = io::Error>
         + Decoder<Item = BytesMut, Error = io::Error>

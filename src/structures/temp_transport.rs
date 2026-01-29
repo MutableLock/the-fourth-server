@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+///A container, that can store reference of the stream, and be used inside other structures, that does not accepts the references.
 pub struct TempTransport<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     base_transport: &'a mut T,
 }
