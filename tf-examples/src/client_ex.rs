@@ -26,16 +26,16 @@ fn make_test_request() -> DataRequest {
 
 fn make_big_payload_request() -> DataRequest {
     let mut rng = rand::rng();
-    let size = 8096; // 250 MB
-    let request = ExpensiveMsg{
-        s_type: ExampleSType::ExpensiveMessage,
+    let size = 8096; // 8 kilobytes
+    let request = ExpensiveResponse{
+        s_type: ExampleSType::ExpensiveResponse,
         id: 12,
         data: (0..size).map(|_| rng.r#gen()).collect(),
     };
     let data_req = DataRequest{
         handler_info: HandlerInfo::new_named("BIG_PAYLOAD".to_string()),
         data: s_type::to_vec(&request).unwrap(),
-        s_type: Box::new(ExampleSType::ExpensiveMessage),
+        s_type: Box::new(ExampleSType::ExpensiveResponse),
     };
     data_req
 }
@@ -85,10 +85,10 @@ async fn main() {
         client_connect.dispatch_request(client_req).await.expect("Sending request failed");
         if let Ok(mut resp) = rx.await {
             println!("Delay on high payload request: {} microseconds", start.elapsed().as_micros());
-            let resp: ExpensiveMsg = s_type::from_slice(resp.as_mut()).unwrap();
+            let resp: ExpensiveResponse = s_type::from_slice(resp.as_mut()).unwrap();
          //   println!("Received response: {:?}", resp);
         }
-
+        /*
         let (tx, rx) = tokio::sync::oneshot::channel();
         let test_req = make_very_big_payload_request();
         let client_req = ClientRequest{ req: test_req, consumer: tx};
@@ -99,5 +99,7 @@ async fn main() {
             let resp: ExpensiveResponse = s_type::from_slice(resp.as_mut()).unwrap();
             //   println!("Received response: {:?}", resp);
         }
+
+         */
     }
 }
