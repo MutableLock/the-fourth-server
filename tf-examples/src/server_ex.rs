@@ -28,9 +28,9 @@ pub async fn main(){
     router.commit_routes();
     let router = Arc::new(router);
 
-    let mut server = TcpServer::new("0.0.0.0:9973".to_string(), router, None, LengthDelimitedCodec::new(), None).await;
+    let mut server = TcpServer::new("0.0.0.0:9973".to_string(), router, None, LengthDelimitedCodec::new(1024 * 1024 * 1024), None).await;
     server.start().await;
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
     server.send_stop();
 
 }

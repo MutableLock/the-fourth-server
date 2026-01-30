@@ -11,7 +11,20 @@ path = "src/s_type_ex.rs"
 name = "server_example"
 path = "src/server_ex.rs"
 
+[[bin]]
+name = "client_example"
+path = "src/client_ex.rs"
+
 [dependencies]
 the-fourth-server = {path = "../"}
 serde = { version = "1.0", features = ["derive"] }
 num_enum = "0.7"
+rand = "0.9.2"
+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -34,9 +34,8 @@ impl Handler for BigPayloadHandler {
                 return Ok(s_type::to_vec(&message).unwrap());
             }
             ExampleSType::ExpensiveResponse => {
-                let mut response = s_type::from_slice::<ExpensiveResponse>(data.as_mut()).unwrap();
-                response.data.sort();
-                return Ok(s_type::to_vec(&response).unwrap());
+
+                return Ok(data.to_vec());
             }
             _ => {
                 return Err("Malformed message type".into());

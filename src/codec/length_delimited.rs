@@ -1,19 +1,21 @@
-use std::io;
-use async_trait::async_trait;
-use tokio_util::bytes::{Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder};
 use crate::codec::codec_trait::TfCodec;
 use crate::structures::transport::Transport;
+use async_trait::async_trait;
+use std::io;
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder};
 #[derive(Clone)]
 ///The wrapper aroung existing codec, to be compatible with server
 pub struct LengthDelimitedCodec {
-    codec: tokio_util::codec::LengthDelimitedCodec
+    codec: tokio_util::codec::LengthDelimitedCodec,
 }
 
 impl LengthDelimitedCodec {
-    pub fn new() -> Self {
-        Self{
-            codec: tokio_util::codec::LengthDelimitedCodec::new(),
+    pub fn new(max_message_length: usize) -> Self {
+        Self {
+            codec: tokio_util::codec::LengthDelimitedCodec::builder()
+                .max_frame_length(max_message_length)
+                .new_codec(),
         }
     }
 }
