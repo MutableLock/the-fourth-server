@@ -43,7 +43,7 @@ pub trait StructureType: Any + Send + Sync {
     fn equals(&self, other: &dyn StructureType) -> bool;
 
     fn as_any(&self) -> &dyn Any;
-
+    ///Only for local use, do not try to use this in serialize functions
     fn hash(&self) -> u64;
 
     ///We don't use the equals from rust trait, due to need of dyn compatibility

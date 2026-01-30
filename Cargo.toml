@@ -8,13 +8,6 @@ name = "tfserver"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 
-[[bin]]
-name = "tfserver-runtime-test"
-path="src/test_main.rs"
-
-[[bin]]
-name = "tfserver-client-test"
-path="src/test_client.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

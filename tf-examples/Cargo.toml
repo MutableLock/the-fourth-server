@@ -1,0 +1,17 @@
+[package]
+name = "tf-examples"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "s_type_example"
+path = "src/s_type_ex.rs"
+
+[[bin]]
+name = "server_example"
+path = "src/server_ex.rs"
+
+[dependencies]
+the-fourth-server = {path = "../"}
+serde = { version = "1.0", features = ["derive"] }
+num_enum = "0.7"
