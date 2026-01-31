@@ -1,4 +1,4 @@
-High performance flexible rust binary tcp server.
+High performance, flexible and tine rust binary tcp server.
 
 You can find usage examples in the examples module.
 
