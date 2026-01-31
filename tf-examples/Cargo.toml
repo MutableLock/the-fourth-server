@@ -15,11 +15,13 @@ path = "src/server_ex.rs"
 name = "client_example"
 path = "src/client_ex.rs"
 
+
 [dependencies]
 the-fourth-server = {path = "../"}
 serde = { version = "1.0", features = ["derive"] }
 num_enum = "0.7"
 rand = "0.9.2"
+
 
 
 [profile.release]
